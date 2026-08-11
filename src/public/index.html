@@ -453,7 +453,7 @@
     </div>
 
     <div class="hdr-right">
-      <span class="pattern-pill hybrid" id="ppill">HYBRID</span>
+      <span class="pattern-pill structured" id="ppill">STRUCTURED</span>
       <span class="thread-tag" id="ttag">thread: demo-sre</span>
     </div>
   </header>
@@ -513,15 +513,6 @@
     <div class="sec-label" style="margin-top:6px">Configuración</div>
 
     <div class="cfg-row">
-      <span class="cfg-lbl">PATRÓN</span>
-      <select class="cfg-select" id="patSel" onchange="setPat(this.value)">
-        <option value="hybrid">Hybrid (recomendado)</option>
-        <option value="structured">Structured Query</option>
-        <option value="rag">RAG / Runbooks</option>
-      </select>
-    </div>
-
-    <div class="cfg-row">
       <span class="cfg-lbl">THREAD ID</span>
       <input class="cfg-input" id="tidIn" value="demo-sre" oninput="syncHints()" />
     </div>
@@ -556,8 +547,7 @@
       <button id="sendBtn" onclick="send()">Enviar ↵</button>
     </div>
     <div class="inp-hint">
-      Patrón: <span id="hPat">hybrid</span>
-      &nbsp;·&nbsp; Thread: <span id="hTid">demo-sre</span>
+      Thread: <span id="hTid">demo-sre</span>
       &nbsp;·&nbsp; Usuario: <span id="hUid">sre-engineer</span>
       &nbsp;·&nbsp; <span style="color:var(--txt-dim)">Shift+Enter para nueva línea</span>
     </div>
@@ -570,7 +560,7 @@
 
   // ── State ─────────────────────────────────────
   let busy = false;
-  let pattern = 'hybrid';
+  let pattern = 'structured';
   const tStart = new Map();
 
   const ICONS = {
@@ -589,14 +579,6 @@
   function setStatus(state, txt) {
     document.getElementById('sdot').className = 'sdot ' + state;
     document.getElementById('stxt').textContent = txt;
-  }
-
-  function setPat(v) {
-    pattern = v;
-    const pill = document.getElementById('ppill');
-    pill.className = 'pattern-pill ' + v;
-    pill.textContent = v.toUpperCase();
-    document.getElementById('hPat').textContent = v;
   }
 
   function syncHints() {
