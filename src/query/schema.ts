@@ -55,6 +55,9 @@ export const ALERT_TYPES = [
   "HTTP_4XX_SPIKE",
   "CIRCUIT_BREAKER_OPEN",
   "SERVICE_MESH_TIMEOUT",
+  "SPOT_INTERRUPTION",
+  "NODE_NOT_READY",
+  "NODE_PRESSURE",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
@@ -85,6 +88,42 @@ export const MESH_ERRORS = [
 ] as const;
 export type MeshError = (typeof MESH_ERRORS)[number];
 
+/** Karpenter / cluster-autoscaler node disruption reasons. Non-null only for node-level alerts. */
+export const DISRUPTION_REASONS = [
+  "CONSOLIDATION",
+  "SPOT_INTERRUPTION",
+  "DRIFT",
+  "EXPIRATION",
+  "EMPTINESS",
+] as const;
+export type DisruptionReason = (typeof DISRUPTION_REASONS)[number];
+
+/** Karpenter node pools available in the cluster. */
+export const NODE_POOLS = ["spot-workers", "general-purpose", "memory-optimized"] as const;
+export type NodePool = (typeof NODE_POOLS)[number];
+
+/** EC2 instance types present in the cluster. */
+export const INSTANCE_TYPES = [
+  "m5.2xlarge",
+  "c5.4xlarge",
+  "m5.xlarge",
+  "r5.xlarge",
+  "t3.medium",
+] as const;
+export type InstanceType = (typeof INSTANCE_TYPES)[number];
+
+/**
+ * Node-level alert types: represent events on the Kubernetes node itself rather
+ * than on a running pod. These always carry nodeId, instanceType, nodePool, and
+ * never carry podName (the subject is the node, not a pod).
+ */
+export const NODE_ALERT_TYPES = [
+  "SPOT_INTERRUPTION",
+  "NODE_NOT_READY",
+  "NODE_PRESSURE",
+] as const satisfies readonly AlertType[];
+export const NODE_ALERT_TYPE_SET: ReadonlySet<AlertType> = new Set<AlertType>(NODE_ALERT_TYPES);
+
 /**
  * Alert types that may carry P1 severity. P2 and P3 are valid for all types;
  * P1 is restricted to these. Used by the generator and by load-time
@@ -96,6 +135,8 @@ export const P1_ALERT_TYPES = [
   "CONNECTION_POOL_EXHAUSTED",
   "CIRCUIT_BREAKER_OPEN",
   "SERVICE_MESH_TIMEOUT",
+  "SPOT_INTERRUPTION",
+  "NODE_NOT_READY",
 ] as const satisfies readonly AlertType[];
 
 export const P1_ALERT_TYPE_SET: ReadonlySet<AlertType> = new Set<AlertType>(P1_ALERT_TYPES);
@@ -109,41 +150,55 @@ export const ROOT_CAUSE_CATEGORIES = [
   "resource_exhaustion",
   "configuration_drift",
   "dependency",
+  "node_disruption",
   "unknown",
 ] as const;
 export type RootCauseCategory = (typeof ROOT_CAUSE_CATEGORIES)[number];
 
 const ALERT_EVENTS_DESCRIPTION = `Collection: alert_events
-One document per monitoring alert fired by a microservice in production. Fields:
+One document per monitoring alert fired by a microservice or Kubernetes node in production. Fields:
   _id                string   stable id like "inc_0001"
-  serviceId          string   machine identifier of the affected service,
-                              e.g. "payment-service", "postgres-main", "orders-api", "auth-service"
-  serviceName        string   readable service name, e.g. "Payment Service"
+  serviceId          string   machine identifier of the affected service or infrastructure component,
+                              e.g. "payment-service", "postgres-main", "orders-api", "karpenter"
+  serviceName        string   readable service name, e.g. "Payment Service", "Karpenter Node Manager"
   namespace          string   Kubernetes namespace: ${NAMESPACES.join(", ")}
-  podName            string   pod instance that fired the alert,
-                              e.g. "payment-service-7f4b8c-xk2mn"
+  podName            string   pod instance that fired the alert, e.g. "payment-service-7f4b8c-xk2mn".
+                              null for node-level alertTypes (SPOT_INTERRUPTION, NODE_NOT_READY, NODE_PRESSURE).
   alertType          string   one of: ${ALERT_TYPES.join(", ")}
-  metricValue        number   observed metric value: ms for HIGH_LATENCY and SERVICE_MESH_TIMEOUT;
-                              percent (0-100) for CPU_THROTTLING, OOM_KILLED, and CIRCUIT_BREAKER_OPEN;
-                              integer count for HTTP_500, POD_RESTART, and HTTP_4XX_SPIKE;
-                              connection count for CONNECTION_POOL_EXHAUSTED.
-  threshold          number   configured threshold the metric exceeded; same units as metricValue.
+                              Node-level types (SPOT_INTERRUPTION, NODE_NOT_READY, NODE_PRESSURE) represent
+                              events on the Kubernetes node itself, not a specific pod.
+  metricValue        number   observed value: ms for HIGH_LATENCY and SERVICE_MESH_TIMEOUT;
+                              percent (0-100) for CPU_THROTTLING, OOM_KILLED, CIRCUIT_BREAKER_OPEN,
+                              and NODE_PRESSURE; count for HTTP_500, POD_RESTART, HTTP_4XX_SPIKE,
+                              SPOT_INTERRUPTION (pods affected); minutes NotReady for NODE_NOT_READY;
+                              connections for CONNECTION_POOL_EXHAUSTED.
+  threshold          number   configured threshold exceeded; same units as metricValue.
   severity           string   one of: ${SEVERITIES.join(", ")}
-                              P1 is only assigned to HIGH_LATENCY, HTTP_500,
-                              CONNECTION_POOL_EXHAUSTED, CIRCUIT_BREAKER_OPEN,
-                              and SERVICE_MESH_TIMEOUT alerts.
+                              P1 is only for: HIGH_LATENCY, HTTP_500, CONNECTION_POOL_EXHAUSTED,
+                              CIRCUIT_BREAKER_OPEN, SERVICE_MESH_TIMEOUT, SPOT_INTERRUPTION, NODE_NOT_READY.
   status             string   one of: ${ALERT_STATUSES.join(", ")}
                               State machine: ACTIVE -> INVESTIGATING -> RESOLVED.
   clusterId          string   one of: ${CLUSTER_IDS.join(", ")}
-  meshError          string   service-mesh failure layer: one of ${MESH_ERRORS.join(", ")}.
-                              null when the alert is not mesh-related.
-                              Only non-null for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT alertTypes.
+  meshError          string   service-mesh failure: one of ${MESH_ERRORS.join(", ")}.
+                              null for non-mesh alerts. Only non-null for CIRCUIT_BREAKER_OPEN
+                              and SERVICE_MESH_TIMEOUT alertTypes.
+  nodeId             string   EC2 node hostname, e.g. "ip-10-0-1-245.ec2.internal".
+                              Non-null for all node-level alertTypes and for POD_RESTART / OOM_KILLED
+                              alerts that were caused by node eviction. null for all other pod-level alerts.
+  instanceType       string   EC2 instance type: one of ${INSTANCE_TYPES.join(", ")}.
+                              Non-null iff nodeId is non-null.
+  nodePool           string   Karpenter node pool: one of ${NODE_POOLS.join(", ")}.
+                              Non-null iff nodeId is non-null.
+  disruptionReason   string   Karpenter disruption category: one of ${DISRUPTION_REASONS.join(", ")}.
+                              Non-null only when the node disruption was Karpenter-managed
+                              (alertType SPOT_INTERRUPTION). null for NODE_NOT_READY and NODE_PRESSURE.
   timestamp          Date     BSON date when the alert fired (UTC)
   investigatingAt    Date     BSON date when the alert entered INVESTIGATING; null if not yet.
   resolvedAt         Date     BSON date when the alert was resolved; null if not yet resolved.
   rootCauseCategory  string   one of: ${ROOT_CAUSE_CATEGORIES.join(", ")}.
                               null on ACTIVE alerts; assigned once the team begins
                               INVESTIGATING or marks the alert RESOLVED.
+                              Use "node_disruption" for SPOT_INTERRUPTION, NODE_NOT_READY, NODE_PRESSURE.
                               Use "dependency" for failures caused by a downstream service.
 
 Guidance for pipelines:
@@ -162,11 +217,20 @@ Guidance for pipelines:
     rootCauseCategory:"resource_exhaustion" (or whichever category). Always also
     filter {rootCauseCategory:{$ne:null}} when grouping by this field, because
     ACTIVE alerts have rootCauseCategory null and would create a spurious null bucket.
-  - "circuit breakers" or "mesh errors" or "service mesh issues" =>
-    $match meshError:{$ne:null} for all mesh alerts, or
+  - "circuit breakers" or "mesh errors" => $match meshError:{$ne:null}, or
     $match meshError:"CIRCUIT_BREAKER_OPEN" for circuit-breaker specifically.
+  - "spot interruptions" or "node reclaims" or "karpenter" =>
+    $match alertType:"SPOT_INTERRUPTION". To find cascading pod restarts on the same
+    node, join on nodeId: $match nodeId:"<nodeId>" to get all alerts on that node.
+  - "node events" or "node pressure" or "node not ready" =>
+    $match alertType:{$in:["SPOT_INTERRUPTION","NODE_NOT_READY","NODE_PRESSURE"]}.
+  - "which instance type causes most incidents" => $match nodeId:{$ne:null},
+    $group by instanceType, $sort count desc.
+  - "spot workers pool issues" => $match nodePool:"spot-workers".
+  - "pod restarts caused by node eviction" => $match alertType:"POD_RESTART",
+    nodeId:{$ne:null}.
   - "alerts in namespace X" => $match namespace:"payments-ns" (use exact namespace value).
-  - "pod-level issues" or "which pod is crashing" => group or project on podName field.
+  - "pod-level issues" or "which pod is crashing" => project on podName field.
   - timestamp, investigatingAt, and resolvedAt are real BSON Dates. Always write
     date literals as Extended JSON: {"$date":"2026-08-01T00:00:00Z"}.
     A bare string never matches a BSON Date.

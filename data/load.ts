@@ -137,8 +137,14 @@ async function loadEvents(): Promise<number> {
   await collection.createIndex({ rootCauseCategory: 1 });
   await collection.createIndex({ namespace: 1 });
   await collection.createIndex({ meshError: 1 });
-  await collection.createIndex({ clusterId: 1, severity: 1, timestamp: 1 }); // for correlate_alerts
-  await collection.createIndex({ namespace: 1, severity: 1, status: 1 });    // for namespace-scoped queries
+  await collection.createIndex({ nodeId: 1 });
+  await collection.createIndex({ nodePool: 1 });
+  await collection.createIndex({ instanceType: 1 });
+  await collection.createIndex({ disruptionReason: 1 });
+  await collection.createIndex({ clusterId: 1, severity: 1, timestamp: 1 });         // for correlate_alerts
+  await collection.createIndex({ namespace: 1, severity: 1, status: 1 });            // namespace-scoped queries
+  await collection.createIndex({ nodeId: 1, status: 1, timestamp: 1 });              // node cascade queries
+  await collection.createIndex({ nodePool: 1, severity: 1, rootCauseCategory: 1 }); // node pool analysis
 
   console.log(`  Events: ${events.length} documents into "${cfg.EVENTS_COLLECTION}" (+ indexes).`);
   return events.length;

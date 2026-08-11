@@ -133,6 +133,25 @@ async function main(): Promise<void> {
   check("hybrid assess produces citations (retrieval leg)", judgment.includes("citations") && judgment.includes(".md"));
   check("hybrid assess reaches a verdict (fusion of both legs)", /CONSISTENT|INCONSISTENT|NEEDS REVIEW/i.test(judgment));
 
+  // Fact 6: node disruption cascade — SPOT_INTERRUPTION + cascading POD_RESTARTs on same Karpenter node.
+  const spotResult = await structuredQuery.invoke({
+    question: "How many ACTIVE alerts have alertType SPOT_INTERRUPTION?",
+  });
+  check(
+    "structured_query finds SPOT_INTERRUPTION node event (Karpenter)",
+    spotResult.includes(String(exp.nodeCascade.spotInterruptionActiveCount)),
+    `expected ${exp.nodeCascade.spotInterruptionActiveCount} active SPOT_INTERRUPTION`,
+  );
+
+  const nodeCascadeResult = await structuredQuery.invoke({
+    question: `How many ACTIVE alerts share nodeId '${exp.nodeCascade.nodeId}'? This finds all alerts cascaded from the same node.`,
+  });
+  check(
+    "structured_query finds full node cascade (SPOT_INTERRUPTION + POD_RESTARTs on same node)",
+    nodeCascadeResult.includes(String(exp.nodeCascade.alertsOnAnchorNode)),
+    `expected ${exp.nodeCascade.alertsOnAnchorNode} alerts on node ${exp.nodeCascade.nodeId}`,
+  );
+
   // ---- Checkpoint 3: >=2 tools, memory resumes, one E2E scenario -------------
   console.log("\nCheckpoint 3: tools + memory + end-to-end scenario");
   check("At least two tools working", true); // retrieval + query + hybrid all exercised above

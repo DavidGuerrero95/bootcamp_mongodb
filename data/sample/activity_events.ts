@@ -8,17 +8,25 @@ import {
   ROOT_CAUSE_CATEGORIES,
   P1_ALERT_TYPES,
   P1_ALERT_TYPE_SET,
+  NODE_ALERT_TYPE_SET,
+  NODE_POOLS,
+  INSTANCE_TYPES,
+  DISRUPTION_REASONS,
   type AlertType,
   type Severity,
   type AlertStatus,
   type ClusterId,
   type Namespace,
   type MeshError,
+  type NodePool,
+  type InstanceType,
+  type DisruptionReason,
   type RootCauseCategory,
 } from "../../src/query/schema";
 
 /**
- * Synthetic, internally consistent monitoring alert events for microservices.
+ * Synthetic, internally consistent monitoring alert events for microservices
+ * and Kubernetes nodes.
  *
  * Deterministic: a fixed seed produces the same dataset every run, so the
  * verify script can assert exact answers. The generator seeds one anchor record
@@ -37,7 +45,8 @@ export interface AlertEvent {
   serviceId: string;
   serviceName: string;
   namespace: Namespace;
-  podName: string;
+  /** null for node-level alertTypes (SPOT_INTERRUPTION, NODE_NOT_READY, NODE_PRESSURE). */
+  podName: string | null;
   alertType: AlertType;
   metricValue: number;
   threshold: number;
@@ -46,12 +55,22 @@ export interface AlertEvent {
   clusterId: ClusterId;
   /** Non-null only for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT alertTypes. */
   meshError: MeshError | null;
+  /** Non-null for all node-level alertTypes and for pod alerts caused by node eviction. */
+  nodeId: string | null;
+  /** EC2 instance type of the node. Non-null iff nodeId is non-null. */
+  instanceType: InstanceType | null;
+  /** Karpenter node pool. Non-null iff nodeId is non-null. */
+  nodePool: NodePool | null;
+  /** Karpenter disruption reason. Non-null only for SPOT_INTERRUPTION alerts. */
+  disruptionReason: DisruptionReason | null;
   timestamp: Date;
   investigatingAt: Date | null;
   resolvedAt: Date | null;
   /** null on ACTIVE alerts; assigned once the team begins INVESTIGATING or resolves. */
   rootCauseCategory: RootCauseCategory | null;
 }
+
+// ---- Static data maps -------------------------------------------------------
 
 const SERVICES = [
   { serviceId: "payment-service",      serviceName: "Payment Service",      namespace: "payments-ns" as Namespace, podName: "payment-service-7f4b8c-xk2mn" },
@@ -62,17 +81,37 @@ const SERVICES = [
   { serviceId: "notification-service", serviceName: "Notification Service",  namespace: "platform-ns" as Namespace, podName: "notification-service-4e7c30-tp6rx" },
 ] as const;
 
+/** Infrastructure service used for node-level alerts (no pod — the subject is the node). */
+const KARPENTER_SVC = {
+  serviceId: "karpenter",
+  serviceName: "Karpenter Node Manager",
+  namespace: "platform-ns" as Namespace,
+  podName: null as null,
+} as const;
+
+const NODES = [
+  { nodeId: "ip-10-0-1-245.ec2.internal", instanceType: "m5.2xlarge" as InstanceType, nodePool: "spot-workers"     as NodePool },
+  { nodeId: "ip-10-0-2-118.ec2.internal", instanceType: "c5.4xlarge" as InstanceType, nodePool: "spot-workers"     as NodePool },
+  { nodeId: "ip-10-0-3-092.ec2.internal", instanceType: "m5.xlarge"  as InstanceType, nodePool: "general-purpose"  as NodePool },
+  { nodeId: "ip-10-0-4-207.ec2.internal", instanceType: "r5.xlarge"  as InstanceType, nodePool: "memory-optimized" as NodePool },
+  { nodeId: "ip-10-0-5-163.ec2.internal", instanceType: "t3.medium"  as InstanceType, nodePool: "general-purpose"  as NodePool },
+] as const;
+
+/** The spot-worker node used by the anchor cascade (inc_0053/0054/0055). */
+const ANCHOR_NODE = NODES[0];
+
 const SEED = 424242;
-/** Filler count: 300 total - 11 anchors = 289 filler records. */
-const FILLER_COUNT = 289;
+/**
+ * Filler count: 300 total - 14 anchors = 286 filler records.
+ * Anchors: 5 pre-assigned (inc_0051–inc_0055) + 9 regular anchor records.
+ */
+const FILLER_COUNT = 286;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const MIN_MS = 60_000;
 
-/**
- * Canonical root cause for each alert type, used when a record transitions to
- * INVESTIGATING or RESOLVED. Deterministic — no rng call needed.
- */
+// ---- Domain helpers ---------------------------------------------------------
+
 function rootCauseForAlertType(alertType: AlertType): RootCauseCategory {
   switch (alertType) {
     case "HIGH_LATENCY":             return "resource_exhaustion";
@@ -84,35 +123,73 @@ function rootCauseForAlertType(alertType: AlertType): RootCauseCategory {
     case "HTTP_4XX_SPIKE":           return "configuration_drift";
     case "CIRCUIT_BREAKER_OPEN":     return "dependency";
     case "SERVICE_MESH_TIMEOUT":     return "dependency";
+    case "SPOT_INTERRUPTION":        return "node_disruption";
+    case "NODE_NOT_READY":           return "node_disruption";
+    case "NODE_PRESSURE":            return "node_disruption";
   }
 }
 
-/**
- * Mesh error for a given alert type. Only CIRCUIT_BREAKER_OPEN and
- * SERVICE_MESH_TIMEOUT produce a non-null mesh error — all others are null.
- */
+/** meshError is non-null only for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT. */
 function meshErrorForAlertType(alertType: AlertType): MeshError | null {
   switch (alertType) {
-    case "CIRCUIT_BREAKER_OPEN":  return "CIRCUIT_BREAKER_OPEN";
-    case "SERVICE_MESH_TIMEOUT":  return "TIMEOUT";
-    default:                      return null;
+    case "CIRCUIT_BREAKER_OPEN": return "CIRCUIT_BREAKER_OPEN";
+    case "SERVICE_MESH_TIMEOUT": return "TIMEOUT";
+    default:                     return null;
   }
 }
 
-/** Configured alert thresholds by alertType (same units as metricValue). */
+/** disruptionReason is non-null only for Karpenter-triggered SPOT_INTERRUPTION alerts. */
+function disruptionReasonForAlertType(alertType: AlertType): DisruptionReason | null {
+  return alertType === "SPOT_INTERRUPTION" ? "SPOT_INTERRUPTION" : null;
+}
+
 const THRESHOLDS: Record<AlertType, number> = {
-  HIGH_LATENCY:              500,  // ms
-  HTTP_500:                   50,  // error count
-  OOM_KILLED:                 75,  // percent
-  CONNECTION_POOL_EXHAUSTED:  80,  // connection count
-  POD_RESTART:                 3,  // restart count
-  CPU_THROTTLING:             75,  // percent
-  HTTP_4XX_SPIKE:            200,  // request count
-  CIRCUIT_BREAKER_OPEN:       60,  // percent error rate
-  SERVICE_MESH_TIMEOUT:     2000,  // ms
+  HIGH_LATENCY:              500,   // ms
+  HTTP_500:                   50,   // error count
+  OOM_KILLED:                 75,   // percent
+  CONNECTION_POOL_EXHAUSTED:  80,   // connection count
+  POD_RESTART:                 3,   // restart count
+  CPU_THROTTLING:             75,   // percent
+  HTTP_4XX_SPIKE:            200,   // request count
+  CIRCUIT_BREAKER_OPEN:       60,   // percent error rate
+  SERVICE_MESH_TIMEOUT:     2000,   // ms
+  SPOT_INTERRUPTION:           0,   // pods affected (count); threshold = 0 (any interruption fires)
+  NODE_NOT_READY:              2,   // minutes NotReady before alert fires
+  NODE_PRESSURE:              80,   // percent (DiskPressure / MemoryPressure)
 };
 
-/** Small deterministic PRNG (mulberry32). */
+function observedMetric(rng: () => number, alertType: AlertType): number {
+  const t = THRESHOLDS[alertType];
+  switch (alertType) {
+    case "HIGH_LATENCY":
+      return t + Math.floor(rng() * 4500) + 100;  // 600–5100 ms
+    case "HTTP_500":
+      return t + Math.floor(rng() * 450)  + 10;   // 60–510 errors
+    case "OOM_KILLED":
+      return t + Math.floor(rng() * 24)   + 1;    // 76–99 %
+    case "CONNECTION_POOL_EXHAUSTED":
+      return t + Math.floor(rng() * 120)  + 1;    // 81–200 connections
+    case "POD_RESTART":
+      return t + Math.floor(rng() * 17)   + 1;    // 4–20 restarts
+    case "CPU_THROTTLING":
+      return t + Math.floor(rng() * 24)   + 1;    // 76–99 %
+    case "HTTP_4XX_SPIKE":
+      return t + Math.floor(rng() * 600)  + 10;   // 210–810 requests
+    case "CIRCUIT_BREAKER_OPEN":
+      return t + Math.floor(rng() * 39)   + 1;    // 61–99 % error rate
+    case "SERVICE_MESH_TIMEOUT":
+      return t + Math.floor(rng() * 6000) + 100;  // 2100–8100 ms
+    case "SPOT_INTERRUPTION":
+      return Math.floor(rng() * 18)       + 3;    // 3–20 pods on the reclaimed node
+    case "NODE_NOT_READY":
+      return t + Math.floor(rng() * 58)   + 1;    // 3–60 min NotReady
+    case "NODE_PRESSURE":
+      return t + Math.floor(rng() * 19)   + 1;    // 81–99 %
+  }
+}
+
+// ---- PRNG -------------------------------------------------------------------
+
 function mulberry32(seed: number): () => number {
   let s = seed;
   return () => {
@@ -134,39 +211,12 @@ function startOfMonthUTC(now: Date): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
 }
 
-/**
- * Observed metric value above the configured threshold. Units match THRESHOLDS.
- * Each alertType consumes exactly one rng call.
- */
-function observedMetric(rng: () => number, alertType: AlertType): number {
-  const t = THRESHOLDS[alertType];
-  switch (alertType) {
-    case "HIGH_LATENCY":
-      return t + Math.floor(rng() * 4500) + 100; // 600–5100 ms
-    case "HTTP_500":
-      return t + Math.floor(rng() * 450) + 10;   // 60–510 errors
-    case "OOM_KILLED":
-      return t + Math.floor(rng() * 24) + 1;     // 76–99 %
-    case "CONNECTION_POOL_EXHAUSTED":
-      return t + Math.floor(rng() * 120) + 1;    // 81–200 connections
-    case "POD_RESTART":
-      return t + Math.floor(rng() * 17) + 1;     // 4–20 restarts
-    case "CPU_THROTTLING":
-      return t + Math.floor(rng() * 24) + 1;     // 76–99 %
-    case "HTTP_4XX_SPIKE":
-      return t + Math.floor(rng() * 600) + 10;   // 210–810 requests
-    case "CIRCUIT_BREAKER_OPEN":
-      return t + Math.floor(rng() * 39) + 1;     // 61–99 % error rate
-    case "SERVICE_MESH_TIMEOUT":
-      return t + Math.floor(rng() * 6000) + 100; // 2100–8100 ms
-  }
-}
+// ---- Draft types ------------------------------------------------------------
 
-// ---- Draft type for records before IDs are assigned ----------------------
-
-/** Record whose _id may be pre-assigned (anchors inc_0051/inc_0052) or pending. */
-type PreAssignedDraft = AlertEvent; // _id already set
+type PreAssignedDraft = AlertEvent;
 type RegularDraft = Omit<AlertEvent, "_id">;
+
+// ---- Builder ----------------------------------------------------------------
 
 function buildEvents(now: Date): AlertEvent[] {
   const rng = mulberry32(SEED);
@@ -197,6 +247,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 10 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -216,7 +267,87 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
     meshError: null,
-    timestamp: new Date(now.getTime() - 7 * MIN_MS), // 3 min after inc_0051
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
+    timestamp: new Date(now.getTime() - 7 * MIN_MS),
+    investigatingAt: null,
+    resolvedAt: null,
+    rootCauseCategory: null,
+  });
+
+  // ---- Anchors: Node disruption cascade (Fact 6) --------------------------
+  //
+  // inc_0053: Karpenter spot interruption on node ip-10-0-1-245 (m5.2xlarge,
+  //           spot-workers pool). Fires 2 min before the pod restarts below.
+  // inc_0054: payment-service POD_RESTART caused by node eviction.
+  // inc_0055: orders-api POD_RESTART caused by same node eviction.
+  //
+  // All three share nodeId "ip-10-0-1-245.ec2.internal" so the agent can
+  // correlate them with a nodeId filter or correlate_alerts on the same cluster.
+
+  preAssigned.push({
+    _id: "inc_0053",
+    serviceId: KARPENTER_SVC.serviceId,
+    serviceName: KARPENTER_SVC.serviceName,
+    namespace: KARPENTER_SVC.namespace,
+    podName: null,                          // node-level event; no pod
+    alertType: "SPOT_INTERRUPTION",
+    metricValue: 8,                         // 8 pods running on this node
+    threshold: THRESHOLDS.SPOT_INTERRUPTION,
+    severity: "P1",
+    status: "ACTIVE",
+    clusterId: "prod-us-east-1",
+    meshError: null,
+    nodeId: ANCHOR_NODE.nodeId,
+    instanceType: ANCHOR_NODE.instanceType,
+    nodePool: ANCHOR_NODE.nodePool,
+    disruptionReason: "SPOT_INTERRUPTION",
+    timestamp: new Date(now.getTime() - 12 * MIN_MS),
+    investigatingAt: null,
+    resolvedAt: null,
+    rootCauseCategory: null,
+  });
+
+  preAssigned.push({
+    _id: "inc_0054",
+    serviceId: "payment-service",
+    serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
+    alertType: "POD_RESTART",
+    metricValue: 1,
+    threshold: THRESHOLDS.POD_RESTART,
+    severity: "P2",
+    status: "ACTIVE",
+    clusterId: "prod-us-east-1",
+    meshError: null,
+    nodeId: ANCHOR_NODE.nodeId,            // same node — eviction cascade
+    instanceType: ANCHOR_NODE.instanceType,
+    nodePool: ANCHOR_NODE.nodePool,
+    disruptionReason: null,                // the pod restart itself is not the Karpenter event
+    timestamp: new Date(now.getTime() - 9 * MIN_MS),
+    investigatingAt: null,
+    resolvedAt: null,
+    rootCauseCategory: null,
+  });
+
+  preAssigned.push({
+    _id: "inc_0055",
+    serviceId: "orders-api",
+    serviceName: "Orders API",
+    namespace: "orders-ns",
+    podName: "orders-api-5c2f87-rv4nt",
+    alertType: "POD_RESTART",
+    metricValue: 1,
+    threshold: THRESHOLDS.POD_RESTART,
+    severity: "P2",
+    status: "ACTIVE",
+    clusterId: "prod-us-east-1",
+    meshError: null,
+    nodeId: ANCHOR_NODE.nodeId,            // same node
+    instanceType: ANCHOR_NODE.instanceType,
+    nodePool: ANCHOR_NODE.nodePool,
+    disruptionReason: null,
+    timestamp: new Date(now.getTime() - 8 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
     rootCauseCategory: null,
@@ -235,6 +366,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 75 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -253,6 +385,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "ACTIVE",
     clusterId: "prod-us-west-2",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 45 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -260,11 +393,6 @@ function buildEvents(now: Date): AlertEvent[] {
   });
 
   // ---- Anchors: Verifiable Fact 3 -----------------------------------------
-  //
-  // Exactly 3 P1 RESOLVED incidents this calendar month, with resolution times
-  // of 30 min, 40 min, and 41 min (sum 111 min, average exactly 37 min).
-  // Timestamps are placed early in the month (SOM + 2 h / 26 h / 50 h) so they
-  // are well before any reasonable "now" when the demo runs.
 
   const res1Ts = new Date(SOM + 2 * HOUR_MS);
   regular.push({
@@ -279,6 +407,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "RESOLVED",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: res1Ts,
     investigatingAt: new Date(res1Ts.getTime() + 5 * MIN_MS),
     resolvedAt: new Date(res1Ts.getTime() + 30 * MIN_MS),
@@ -298,6 +427,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "RESOLVED",
     clusterId: "prod-us-west-2",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: res2Ts,
     investigatingAt: new Date(res2Ts.getTime() + 8 * MIN_MS),
     resolvedAt: new Date(res2Ts.getTime() + 40 * MIN_MS),
@@ -317,6 +447,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "RESOLVED",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: res3Ts,
     investigatingAt: new Date(res3Ts.getTime() + 10 * MIN_MS),
     resolvedAt: new Date(res3Ts.getTime() + 41 * MIN_MS),
@@ -324,9 +455,6 @@ function buildEvents(now: Date): AlertEvent[] {
   });
 
   // ---- Anchors: Verifiable Fact 4 -----------------------------------------
-  //
-  // Exactly 4 INVESTIGATING records across at least 2 different services.
-  // All P2/P3; OOM_KILLED and POD_RESTART/CPU_THROTTLING are fine for those.
 
   regular.push({
     serviceId: "payment-service",
@@ -340,6 +468,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "INVESTIGATING",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 4 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 3 * HOUR_MS),
     resolvedAt: null,
@@ -358,6 +487,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "INVESTIGATING",
     clusterId: "prod-us-west-2",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 2 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 1 * HOUR_MS),
     resolvedAt: null,
@@ -376,6 +506,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "INVESTIGATING",
     clusterId: "prod-us-east-1",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 3 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS - 2 * HOUR_MS),
     resolvedAt: null,
@@ -394,6 +525,7 @@ function buildEvents(now: Date): AlertEvent[] {
     status: "INVESTIGATING",
     clusterId: "prod-us-west-2",
     meshError: null,
+    nodeId: null, instanceType: null, nodePool: null, disruptionReason: null,
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 1 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS),
     resolvedAt: null,
@@ -402,21 +534,21 @@ function buildEvents(now: Date): AlertEvent[] {
 
   // ---- Filler records ------------------------------------------------------
   //
-  // Always P2 or P3, never INVESTIGATING. Timestamps start at least 3 h before
-  // now (avoiding the last-2-h window used by Fact 1) and spread across the
-  // past 30 days. Resolved filler records always have investigatingAt set and
-  // investigatingAt < resolvedAt.
+  // Always P2 or P3, never INVESTIGATING. Node-type alerts use KARPENTER_SVC and
+  // a random node from NODES. All other alerts use SERVICES and have null node fields.
+  // The rng call for SERVICES is always consumed (even for node alerts) to keep
+  // the sequence stable if the alert-type mix changes.
 
   const FILLER_SVRTS = ["P2", "P3"] as const satisfies readonly Severity[];
   const FILLER_STATS = ["ACTIVE", "RESOLVED"] as const satisfies readonly AlertStatus[];
 
   for (let i = 0; i < FILLER_COUNT; i++) {
-    const svc = pick(rng, SERVICES);
+    const rawSvc  = pick(rng, SERVICES);           // always consumed
     const severity = pick(rng, FILLER_SVRTS);
     const alertType = pick(rng, ALERT_TYPES);
-    const status = pick(rng, FILLER_STATS);
+    const status   = pick(rng, FILLER_STATS);
     const clusterId = pick(rng, CLUSTER_IDS);
-    // Timestamp: at least 3 h old, spread across last 30 days.
+
     const tsOffsetMs =
       Math.floor(rng() * 30) * DAY_MS +
       Math.floor(rng() * DAY_MS) +
@@ -424,29 +556,46 @@ function buildEvents(now: Date): AlertEvent[] {
     const timestamp = new Date(now.getTime() - tsOffsetMs);
     const metric = observedMetric(rng, alertType);
 
+    const isNodeAlert = NODE_ALERT_TYPE_SET.has(alertType);
+    const svc = isNodeAlert ? KARPENTER_SVC : rawSvc;
+
+    // For node-type alerts pick a node; for others all node fields stay null.
+    let nodeId: string | null = null;
+    let instanceType: InstanceType | null = null;
+    let nodePool: NodePool | null = null;
+    if (isNodeAlert) {
+      const node = pick(rng, NODES);
+      nodeId = node.nodeId;
+      instanceType = node.instanceType;
+      nodePool = node.nodePool;
+    }
+
     let investigatingAt: Date | null = null;
     let resolvedAt: Date | null = null;
-
     if (status === "RESOLVED") {
-      const resolutionMs = (Math.floor(rng() * 240) + 10) * MIN_MS; // 10–250 min
+      const resolutionMs = (Math.floor(rng() * 240) + 10) * MIN_MS;
       const investigatingOffsetMs =
         Math.floor(rng() * (resolutionMs / 2 - MIN_MS)) + MIN_MS;
       investigatingAt = new Date(timestamp.getTime() + investigatingOffsetMs);
-      resolvedAt = new Date(timestamp.getTime() + resolutionMs);
+      resolvedAt      = new Date(timestamp.getTime() + resolutionMs);
     }
 
     regular.push({
-      serviceId: svc.serviceId,
+      serviceId:   svc.serviceId,
       serviceName: svc.serviceName,
-      namespace: svc.namespace,
-      podName: svc.podName,
+      namespace:   svc.namespace,
+      podName:     isNodeAlert ? null : rawSvc.podName,
       alertType,
       metricValue: metric,
-      threshold: THRESHOLDS[alertType],
+      threshold:   THRESHOLDS[alertType],
       severity,
       status,
       clusterId,
-      meshError: meshErrorForAlertType(alertType),
+      meshError:         meshErrorForAlertType(alertType),
+      nodeId,
+      instanceType,
+      nodePool,
+      disruptionReason:  disruptionReasonForAlertType(alertType),
       timestamp,
       investigatingAt,
       resolvedAt,
@@ -455,10 +604,6 @@ function buildEvents(now: Date): AlertEvent[] {
   }
 
   // ---- ID assignment -------------------------------------------------------
-  //
-  // Pre-assigned records keep inc_0051 / inc_0052. All others are sorted by
-  // timestamp and assigned inc_0001 … inc_0300 in order, skipping the reserved
-  // IDs so the total remains exactly 300 unique, sequential identifiers.
 
   const reservedIds = new Set(preAssigned.map((d) => d._id));
   regular.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -479,32 +624,32 @@ function buildEvents(now: Date): AlertEvent[] {
 
 export interface Expectations {
   totalEvents: number;
-  /**
-   * Number of P1 ACTIVE alerts for payment-service (all time, not windowed).
-   * Stable: filler never generates P1, so this equals the anchor count = 3.
-   */
   paymentServiceP1ActiveCount: number;
-  /** The correlated anchor pair (Fact 2). */
   correlatedPair: {
-    first: { _id: string; serviceId: string; clusterId: string };
+    first:  { _id: string; serviceId: string; clusterId: string };
     second: { _id: string; serviceId: string; clusterId: string };
     diffMs: number;
   };
-  /** P1 RESOLVED facts for this calendar month (Fact 3). */
   p1ResolvedThisMonth: {
     count: number;
     resolutionMinutes: [number, number, number];
     avgResolutionMinutes: number;
   };
-  /** Count of INVESTIGATING incidents (Fact 4). */
   investigatingCount: number;
-  /** How many P1 RESOLVED this month have rootCauseCategory "resource_exhaustion" (Fact 5). */
   p1ResourceExhaustionThisMonth: number;
-  /** ID of an anchor record suitable for the hybrid assess demo. */
   assessSubjectId: string;
+  /** Node disruption cascade anchors (Fact 6). */
+  nodeCascade: {
+    spotInterruptionId: string;
+    podRestartIds: [string, string];
+    nodeId: string;
+    /** Total ACTIVE alerts on the anchor node (inc_0053 + inc_0054 + inc_0055 = 3). */
+    alertsOnAnchorNode: number;
+    /** Count of ACTIVE SPOT_INTERRUPTION alerts in the whole dataset. */
+    spotInterruptionActiveCount: number;
+  };
 }
 
-/** Derive the verifiable facts from a generated event set. */
 export function computeExpectations(events: AlertEvent[], now: Date = new Date()): Expectations {
   const SOM = startOfMonthUTC(now);
 
@@ -517,8 +662,7 @@ export function computeExpectations(events: AlertEvent[], now: Date = new Date()
   if (!inc51 || !inc52) throw new Error("inc_0051 or inc_0052 missing; generator broken.");
 
   const p1Resolved = events.filter(
-    (e) =>
-      e.severity === "P1" && e.status === "RESOLVED" && e.timestamp.getTime() >= SOM,
+    (e) => e.severity === "P1" && e.status === "RESOLVED" && e.timestamp.getTime() >= SOM,
   );
 
   const resolutionMins = p1Resolved
@@ -527,14 +671,21 @@ export function computeExpectations(events: AlertEvent[], now: Date = new Date()
 
   const [m0 = 0, m1 = 0, m2 = 0] = resolutionMins;
 
-  const investigating = events.filter((e) => e.status === "INVESTIGATING");
-  const p1ResourceExhaustion = p1Resolved.filter((e) => e.rootCauseCategory === "resource_exhaustion");
+  const investigating         = events.filter((e) => e.status === "INVESTIGATING");
+  const p1ResourceExhaustion  = p1Resolved.filter((e) => e.rootCauseCategory === "resource_exhaustion");
+
+  const alertsOnAnchorNode = events.filter(
+    (e) => e.nodeId === ANCHOR_NODE.nodeId && e.status === "ACTIVE",
+  );
+  const spotInterruptionActive = events.filter(
+    (e) => e.alertType === "SPOT_INTERRUPTION" && e.status === "ACTIVE",
+  );
 
   return {
     totalEvents: events.length,
     paymentServiceP1ActiveCount: paymentP1Active.length,
     correlatedPair: {
-      first: { _id: inc51._id, serviceId: inc51.serviceId, clusterId: inc51.clusterId },
+      first:  { _id: inc51._id, serviceId: inc51.serviceId, clusterId: inc51.clusterId },
       second: { _id: inc52._id, serviceId: inc52.serviceId, clusterId: inc52.clusterId },
       diffMs: Math.abs(inc51.timestamp.getTime() - inc52.timestamp.getTime()),
     },
@@ -546,23 +697,25 @@ export function computeExpectations(events: AlertEvent[], now: Date = new Date()
           ? resolutionMins.reduce((s, m) => s + m, 0) / resolutionMins.length
           : 0,
     },
-    investigatingCount: investigating.length,
+    investigatingCount:            investigating.length,
     p1ResourceExhaustionThisMonth: p1ResourceExhaustion.length,
-    assessSubjectId: "inc_0051",
+    assessSubjectId:               "inc_0051",
+    nodeCascade: {
+      spotInterruptionId:       "inc_0053",
+      podRestartIds:            ["inc_0054", "inc_0055"],
+      nodeId:                   ANCHOR_NODE.nodeId,
+      alertsOnAnchorNode:       alertsOnAnchorNode.length,
+      spotInterruptionActiveCount: spotInterruptionActive.length,
+    },
   };
 }
 
-/**
- * Generate the synthetic alert events and assert internal consistency. Throws if
- * any verifiable fact or consistency rule is violated so callers never load bad
- * data.
- */
+// ---- Generator with full consistency checks ---------------------------------
+
 export function generateAlertEvents(now: Date = new Date()): AlertEvent[] {
   const events = buildEvents(now);
   const SOM = startOfMonthUTC(now);
   const twoHoursAgo = now.getTime() - 2 * HOUR_MS;
-
-  // ---- Consistency rules (all records) -------------------------------------
 
   for (const e of events) {
     // Enum guards
@@ -577,26 +730,42 @@ export function generateAlertEvents(now: Date = new Date()): AlertEvent[] {
     if (!NAMESPACES.includes(e.namespace))
       throw new Error(`${e._id}: unknown namespace "${e.namespace}"`);
 
-    // meshError must be non-null exactly for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT
-    const expectsMeshError = e.alertType === "CIRCUIT_BREAKER_OPEN" || e.alertType === "SERVICE_MESH_TIMEOUT";
-    if (expectsMeshError && e.meshError === null)
-      throw new Error(`${e._id}: alertType "${e.alertType}" requires a non-null meshError`);
-    if (!expectsMeshError && e.meshError !== null)
-      throw new Error(`${e._id}: alertType "${e.alertType}" must have null meshError (got "${e.meshError}")`);
-    if (e.meshError !== null && !(MESH_ERRORS as readonly string[]).includes(e.meshError))
-      throw new Error(`${e._id}: unknown meshError "${e.meshError}"`);
+    // Node-level vs pod-level invariants
+    const isNodeType = NODE_ALERT_TYPE_SET.has(e.alertType);
+    if (isNodeType && e.podName !== null)
+      throw new Error(`${e._id}: node-type "${e.alertType}" must have null podName`);
+    if (!isNodeType && e.podName === null)
+      throw new Error(`${e._id}: pod-level "${e.alertType}" must have non-null podName`);
+    if (isNodeType && e.nodeId === null)
+      throw new Error(`${e._id}: node-type "${e.alertType}" must have non-null nodeId`);
+
+    // nodeId / instanceType / nodePool must be all null or all non-null
+    const hasNode = e.nodeId !== null;
+    if (hasNode !== (e.instanceType !== null) || hasNode !== (e.nodePool !== null))
+      throw new Error(`${e._id}: nodeId, instanceType, nodePool must all be null or all non-null`);
+
+    // disruptionReason only for SPOT_INTERRUPTION
+    if (e.disruptionReason !== null && e.alertType !== "SPOT_INTERRUPTION")
+      throw new Error(`${e._id}: disruptionReason must be null for alertType "${e.alertType}"`);
+    if (e.alertType === "SPOT_INTERRUPTION" && e.disruptionReason === null)
+      throw new Error(`${e._id}: SPOT_INTERRUPTION must have a non-null disruptionReason`);
+
+    // meshError only for CIRCUIT_BREAKER_OPEN / SERVICE_MESH_TIMEOUT
+    const expectsMesh = e.alertType === "CIRCUIT_BREAKER_OPEN" || e.alertType === "SERVICE_MESH_TIMEOUT";
+    if (expectsMesh && e.meshError === null)
+      throw new Error(`${e._id}: "${e.alertType}" requires non-null meshError`);
+    if (!expectsMesh && e.meshError !== null)
+      throw new Error(`${e._id}: "${e.alertType}" must have null meshError`);
 
     // P1 only for allowed alertTypes
     if (e.severity === "P1" && !P1_ALERT_TYPE_SET.has(e.alertType))
-      throw new Error(
-        `${e._id}: P1 severity with alertType "${e.alertType}" is not allowed`,
-      );
+      throw new Error(`${e._id}: P1 not allowed for alertType "${e.alertType}"`);
 
-    // rootCauseCategory must be null on ACTIVE; non-null once investigating/resolved
+    // rootCauseCategory lifecycle
     if (e.status === "ACTIVE" && e.rootCauseCategory !== null)
       throw new Error(`${e._id}: ACTIVE record must have null rootCauseCategory`);
     if ((e.status === "INVESTIGATING" || e.status === "RESOLVED") && e.rootCauseCategory === null)
-      throw new Error(`${e._id}: ${e.status} record must have a non-null rootCauseCategory`);
+      throw new Error(`${e._id}: ${e.status} record must have non-null rootCauseCategory`);
     if (e.rootCauseCategory !== null && !(ROOT_CAUSE_CATEGORIES as readonly string[]).includes(e.rootCauseCategory))
       throw new Error(`${e._id}: unknown rootCauseCategory "${e.rootCauseCategory}"`);
 
@@ -615,102 +784,74 @@ export function generateAlertEvents(now: Date = new Date()): AlertEvent[] {
       if (e.resolvedAt !== null)
         throw new Error(`${e._id}: ACTIVE record has non-null resolvedAt`);
     }
-
-    // investigatingAt < resolvedAt when both present
     if (e.investigatingAt !== null && e.resolvedAt !== null) {
       if (e.investigatingAt.getTime() >= e.resolvedAt.getTime())
         throw new Error(`${e._id}: investigatingAt >= resolvedAt`);
     }
   }
 
-  // ---- Verifiable Fact 1 ---------------------------------------------------
-  // payment-service has exactly 3 P1 ACTIVE alerts within the last 2 h; no other
-  // service exceeds 2.
-
+  // ---- Fact 1 ---------------------------------------------------------------
   const p1ActiveIn2h = events.filter(
     (e) => e.severity === "P1" && e.status === "ACTIVE" && e.timestamp.getTime() >= twoHoursAgo,
   );
-
   const byService = new Map<string, number>();
-  for (const e of p1ActiveIn2h) {
-    byService.set(e.serviceId, (byService.get(e.serviceId) ?? 0) + 1);
-  }
+  for (const e of p1ActiveIn2h) byService.set(e.serviceId, (byService.get(e.serviceId) ?? 0) + 1);
 
   const paymentCount = byService.get("payment-service") ?? 0;
   if (paymentCount !== 3)
-    throw new Error(
-      `Fact 1: payment-service has ${paymentCount} P1 ACTIVE in last 2 h, expected 3`,
-    );
-
-  for (const [svcId, count] of byService) {
+    throw new Error(`Fact 1: payment-service has ${paymentCount} P1 ACTIVE in last 2 h, expected 3`);
+  for (const [svcId, count] of byService)
     if (svcId !== "payment-service" && count > 2)
-      throw new Error(
-        `Fact 1: service "${svcId}" has ${count} P1 ACTIVE in last 2 h (max allowed for non-payment-service is 2)`,
-      );
-  }
+      throw new Error(`Fact 1: service "${svcId}" has ${count} P1 ACTIVE in last 2 h (max 2 for non-payment)`);
 
-  // ---- Verifiable Fact 2 ---------------------------------------------------
-  // inc_0051 and inc_0052 exist, are < 5 min apart, both in prod-us-east-1.
-
+  // ---- Fact 2 ---------------------------------------------------------------
   const inc51 = events.find((e) => e._id === "inc_0051");
   const inc52 = events.find((e) => e._id === "inc_0052");
   if (!inc51) throw new Error("Fact 2: inc_0051 not found");
   if (!inc52) throw new Error("Fact 2: inc_0052 not found");
-
   const diffMs = Math.abs(inc51.timestamp.getTime() - inc52.timestamp.getTime());
   if (diffMs >= 5 * MIN_MS)
-    throw new Error(
-      `Fact 2: inc_0051 and inc_0052 are ${diffMs / MIN_MS} min apart; expected < 5 min`,
-    );
-  if (inc51.clusterId !== "prod-us-east-1")
-    throw new Error(`Fact 2: inc_0051 is in "${inc51.clusterId}", expected prod-us-east-1`);
-  if (inc52.clusterId !== "prod-us-east-1")
-    throw new Error(`Fact 2: inc_0052 is in "${inc52.clusterId}", expected prod-us-east-1`);
+    throw new Error(`Fact 2: inc_0051/inc_0052 are ${diffMs / MIN_MS} min apart; expected < 5`);
+  if (inc51.clusterId !== "prod-us-east-1") throw new Error("Fact 2: inc_0051 not in prod-us-east-1");
+  if (inc52.clusterId !== "prod-us-east-1") throw new Error("Fact 2: inc_0052 not in prod-us-east-1");
 
-  // ---- Verifiable Fact 3 ---------------------------------------------------
-  // Exactly 3 P1 RESOLVED this month; resolution times = 30, 40, 41 min (avg 37).
-
+  // ---- Fact 3 ---------------------------------------------------------------
   const p1ResolvedThisMonth = events.filter(
-    (e) =>
-      e.severity === "P1" && e.status === "RESOLVED" && e.timestamp.getTime() >= SOM,
+    (e) => e.severity === "P1" && e.status === "RESOLVED" && e.timestamp.getTime() >= SOM,
   );
   if (p1ResolvedThisMonth.length !== 3)
-    throw new Error(
-      `Fact 3: ${p1ResolvedThisMonth.length} P1 RESOLVED incidents this month, expected 3`,
-    );
-
+    throw new Error(`Fact 3: ${p1ResolvedThisMonth.length} P1 RESOLVED this month, expected 3`);
   const resMins = p1ResolvedThisMonth
-    .map((e) =>
-      e.resolvedAt !== null ? (e.resolvedAt.getTime() - e.timestamp.getTime()) / MIN_MS : 0,
-    )
+    .map((e) => e.resolvedAt !== null ? (e.resolvedAt.getTime() - e.timestamp.getTime()) / MIN_MS : 0)
     .sort((a, b) => a - b);
-
   const [r0 = -1, r1 = -1, r2 = -1] = resMins;
   if (r0 !== 30 || r1 !== 40 || r2 !== 41)
-    throw new Error(
-      `Fact 3: resolution minutes are [${resMins.join(", ")}], expected [30, 40, 41]`,
-    );
-
+    throw new Error(`Fact 3: resolution minutes are [${resMins.join(", ")}], expected [30, 40, 41]`);
   const avg = resMins.reduce((s, m) => s + m, 0) / resMins.length;
   if (Math.abs(avg - 37) > 0.001)
     throw new Error(`Fact 3: average resolution time is ${avg} min, expected 37`);
 
-  // ---- Verifiable Fact 4 ---------------------------------------------------
-  // Exactly 4 INVESTIGATING, spanning at least 2 different services.
-
+  // ---- Fact 4 ---------------------------------------------------------------
   const investigating = events.filter((e) => e.status === "INVESTIGATING");
   if (investigating.length !== 4)
     throw new Error(`Fact 4: ${investigating.length} INVESTIGATING records, expected 4`);
-
   const invServices = new Set(investigating.map((e) => e.serviceId));
   if (invServices.size < 2)
-    throw new Error(
-      `Fact 4: INVESTIGATING records only span ${invServices.size} service(s), expected >= 2`,
-    );
+    throw new Error(`Fact 4: INVESTIGATING spans only ${invServices.size} service(s), expected >= 2`);
+
+  // ---- Fact 6: node cascade ------------------------------------------------
+  const inc53 = events.find((e) => e._id === "inc_0053");
+  const inc54 = events.find((e) => e._id === "inc_0054");
+  const inc55 = events.find((e) => e._id === "inc_0055");
+  if (!inc53) throw new Error("Fact 6: inc_0053 (SPOT_INTERRUPTION) not found");
+  if (!inc54) throw new Error("Fact 6: inc_0054 (POD_RESTART payment-service) not found");
+  if (!inc55) throw new Error("Fact 6: inc_0055 (POD_RESTART orders-api) not found");
+  if (inc53.nodeId !== ANCHOR_NODE.nodeId || inc54.nodeId !== ANCHOR_NODE.nodeId || inc55.nodeId !== ANCHOR_NODE.nodeId)
+    throw new Error("Fact 6: inc_0053/0054/0055 must share the same nodeId");
+  if (inc53.alertType !== "SPOT_INTERRUPTION")
+    throw new Error("Fact 6: inc_0053 must be SPOT_INTERRUPTION");
 
   return events;
 }
 
-// Keep the old export name so existing callers (load.ts, verify.ts) can migrate
-// at their own pace. Both names generate the same data.
 export { generateAlertEvents as generateActivityEvents };

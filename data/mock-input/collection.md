@@ -37,6 +37,10 @@
 | `status` | string | estado actual de la alerta (ver enums) |
 | `clusterId` | string | cluster de Kubernetes donde ocurrió, e.g. `prod-us-east-1` |
 | `meshError` | string\|null | falla detectada en la capa de service mesh (ver enums); null si no involucra mesh |
+| `nodeId` | string\|null | hostname EC2 del nodo, e.g. `ip-10-0-1-245.ec2.internal`; no-null en alertas de nodo y en `POD_RESTART`/`OOM_KILLED` causados por evicción |
+| `instanceType` | string\|null | tipo de instancia EC2, e.g. `m5.2xlarge`; no-null iff `nodeId != null` |
+| `nodePool` | string\|null | node pool de Karpenter (ver enums); no-null iff `nodeId != null` |
+| `disruptionReason` | string\|null | razón de disrupción de Karpenter (ver enums); no-null solo en `SPOT_INTERRUPTION` |
 | `timestamp` | Date | BSON UTC — momento en que se disparó la alerta |
 | `investigatingAt` | Date | BSON UTC — momento en que el sistema pasó a estado `INVESTIGATING`; null si no aplica |
 | `resolvedAt` | Date | BSON UTC — momento en que el sistema pasó a estado `RESOLVED`; null si aún no resuelto |
@@ -44,12 +48,15 @@
 
 ## Enums
 
-- `alertType`: `HIGH_LATENCY`, `HTTP_500`, `OOM_KILLED`, `CONNECTION_POOL_EXHAUSTED`, `POD_RESTART`, `CPU_THROTTLING`, `HTTP_4XX_SPIKE`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`
-- `severity`: `P1`, `P2`, `P3` — P1 solo para `HIGH_LATENCY`, `HTTP_500`, `CONNECTION_POOL_EXHAUSTED`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`
+- `alertType`: `HIGH_LATENCY`, `HTTP_500`, `OOM_KILLED`, `CONNECTION_POOL_EXHAUSTED`, `POD_RESTART`, `CPU_THROTTLING`, `HTTP_4XX_SPIKE`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`, `SPOT_INTERRUPTION`, `NODE_NOT_READY`, `NODE_PRESSURE`
+- `severity`: `P1`, `P2`, `P3` — P1 para `HIGH_LATENCY`, `HTTP_500`, `CONNECTION_POOL_EXHAUSTED`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`, `SPOT_INTERRUPTION`, `NODE_NOT_READY`
 - `status`: `ACTIVE`, `INVESTIGATING`, `RESOLVED`
 - `namespace`: `payments-ns`, `auth-ns`, `orders-ns`, `data-ns`, `platform-ns`
-- `meshError`: `CIRCUIT_BREAKER_OPEN`, `TIMEOUT`, `RETRY_EXCEEDED`, `CONNECTION_REFUSED` — solo no-null en alertas `CIRCUIT_BREAKER_OPEN` y `SERVICE_MESH_TIMEOUT`
-- `rootCauseCategory`: `code_defect`, `resource_exhaustion`, `configuration_drift`, `dependency`, `unknown`
+- `meshError`: `CIRCUIT_BREAKER_OPEN`, `TIMEOUT`, `RETRY_EXCEEDED`, `CONNECTION_REFUSED` — solo no-null en `CIRCUIT_BREAKER_OPEN` y `SERVICE_MESH_TIMEOUT`
+- `nodePool`: `spot-workers`, `general-purpose`, `memory-optimized` — solo no-null cuando `nodeId != null`
+- `instanceType`: `m5.2xlarge`, `c5.4xlarge`, `m5.xlarge`, `r5.xlarge`, `t3.medium` — solo no-null cuando `nodeId != null`
+- `disruptionReason`: `CONSOLIDATION`, `SPOT_INTERRUPTION`, `DRIFT`, `EXPIRATION`, `EMPTINESS` — solo no-null en `SPOT_INTERRUPTION`
+- `rootCauseCategory`: `code_defect`, `resource_exhaustion`, `configuration_drift`, `dependency`, `node_disruption`, `unknown`
 
 ## Units and conventions
 
