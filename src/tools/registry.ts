@@ -5,6 +5,7 @@ import { assess } from "../hybrid/hybridTool";
 import { correlateAlerts } from "./correlateAlertsTool";
 import { rememberRemediation } from "./remediationMemoryTool";
 import { executeRemediation } from "./executeRemediationTool";
+import { autonomousFix } from "./autonomousFixTool";
 
 /**
  * The tool registry. This is where a team plugs in its 2-3 business tools.
@@ -23,7 +24,7 @@ import { executeRemediation } from "./executeRemediationTool";
 export type AgentTool = StructuredToolInterface;
 
 /** Every tool the scaffold ships with. */
-export const allTools: AgentTool[] = [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts, rememberRemediation, executeRemediation];
+export const allTools: AgentTool[] = [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts, rememberRemediation, executeRemediation, autonomousFix];
 
 /** Lookup by tool name, handy for tests and the verify script. */
 export const toolsByName: Record<string, AgentTool> = Object.fromEntries(

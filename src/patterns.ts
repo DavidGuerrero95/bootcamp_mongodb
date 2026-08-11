@@ -6,6 +6,7 @@ import { correlateAlerts } from "./tools/correlateAlertsTool";
 import { remember } from "./tools/memoryTools";
 import { rememberRemediation } from "./tools/remediationMemoryTool";
 import { executeRemediation } from "./tools/executeRemediationTool";
+import { autonomousFix } from "./tools/autonomousFixTool";
 import type { AgentTool } from "./tools/registry";
 import { RAG_PROMPT, STRUCTURED_PROMPT, HYBRID_PROMPT } from "./agent/prompts/index";
 
@@ -29,11 +30,11 @@ export function toolsForPattern(pattern: Pattern): AgentTool[] {
   // `remember` is cross-cutting: long-term memory applies to every pattern.
   switch (pattern) {
     case "rag":
-      return [knowledgeBaseSearch, remember, rememberRemediation, executeRemediation];
+      return [knowledgeBaseSearch, remember, rememberRemediation, executeRemediation, autonomousFix];
     case "structured":
-      return [structuredQuery, correlateAlerts, remember, rememberRemediation, executeRemediation];
+      return [structuredQuery, correlateAlerts, remember, rememberRemediation, executeRemediation, autonomousFix];
     case "hybrid":
-      return [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts, remember, rememberRemediation, executeRemediation];
+      return [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts, remember, rememberRemediation, executeRemediation, autonomousFix];
   }
 }
 
