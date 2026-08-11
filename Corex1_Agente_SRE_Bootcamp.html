@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Agente SRE Autónomo — Corex 1 · Bancolombia</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reset.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/theme/black.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+<style>
+  :root {
+    --mongo:  #00ED64;
+    --dark:   #001E2B;
+    --navy:   #023430;
+    --white:  #FFFFFF;
+    --muted:  #94A3B8;
+    --light:  #E8F5E9;
+    --red:    #E53E3E;
+    --yellow: #D69E2E;
+    --blue:   #2B6CB0;
+    --purple: #6B46C1;
+  }
+
+  .reveal { font-family: 'Segoe UI', Calibri, sans-serif; }
+  .reveal h1, .reveal h2, .reveal h3 { text-transform: none; letter-spacing: -0.02em; }
+  .reveal section { text-align: left; }
+
+  /* ── Portada ── */
+  .cover { background: var(--dark) !important; }
+  .cover .accent-bar {
+    position: absolute; left: 0; top: 0;
+    width: 12px; height: 100vh;
+    background: var(--mongo);
+  }
+  .cover h1 { color: var(--white); font-size: 2em; line-height: 1.2; margin-left: 30px; }
+  .cover .subtitle { color: var(--mongo); font-size: 1.1em; margin-left: 30px; margin-top: 0.4em; }
+  .cover .team    { color: var(--muted); font-size: 0.7em; margin-left: 30px; margin-top: 1.2em; }
+
+  /* ── Header bar ── */
+  .slide-header {
+    background: var(--dark);
+    color: var(--white);
+    padding: 8px 20px;
+    font-size: 1.1em;
+    font-weight: 700;
+    margin-bottom: 0.6em;
+    border-radius: 4px;
+  }
+
+  /* ── KPI chips ── */
+  .kpis { display: flex; gap: 1em; margin-top: 0.8em; }
+  .kpi {
+    flex: 1; background: var(--dark); border-radius: 8px;
+    padding: 0.6em 0.8em; text-align: center;
+  }
+  .kpi .val { color: var(--mongo); font-size: 1.8em; font-weight: 700; display: block; }
+  .kpi .lbl { color: var(--muted); font-size: 0.55em; line-height: 1.3; }
+
+  /* ── Warning box ── */
+  .warn-box {
+    background: #FFF3CD; border-left: 4px solid var(--yellow);
+    padding: 0.6em 1em; border-radius: 4px; margin-top: 0.8em;
+    color: #7B4F00; font-size: 0.65em;
+  }
+
+  /* ── Code block override ── */
+  .reveal pre { width: 100%; box-shadow: none; }
+  .reveal pre code { font-size: 0.72em; max-height: 320px; }
+
+  /* ── Conversation bubble ── */
+  .chat { background: #1A1A2E; border-radius: 8px; padding: 1em 1.2em; font-size: 0.65em; }
+  .chat .user  { color: var(--mongo); font-weight: 700; }
+  .chat .agent { color: #A8FF78; }
+  .chat .label { color: var(--muted); font-size: 0.85em; }
+
+  /* ── Tables ── */
+  .reveal table { font-size: 0.62em; width: 100%; border-collapse: collapse; }
+  .reveal table th {
+    background: var(--dark); color: var(--white);
+    padding: 6px 10px; text-align: left;
+  }
+  .reveal table td { padding: 5px 10px; border-bottom: 1px solid #E2E8F0; }
+  .reveal table tr:nth-child(even) td { background: #F7FAFC; color: #1A202C; }
+  .reveal table tr:nth-child(odd)  td { background: #FFFFFF; color: #1A202C; }
+
+  /* ── Arch boxes ── */
+  .arch { display: flex; align-items: center; gap: 0.5em; flex-wrap: wrap; margin-top: 0.5em; }
+  .abox {
+    border-radius: 8px; padding: 0.5em 0.8em;
+    font-size: 0.6em; font-weight: 700; color: var(--white);
+    text-align: center; min-width: 120px;
+  }
+  .arrow { color: var(--mongo); font-size: 1.4em; font-weight: 700; }
+
+  /* ── Checkpoint rows ── */
+  .cp-row {
+    display: flex; align-items: flex-start; gap: 1em;
+    background: #F7FAFC; border-radius: 8px;
+    padding: 0.7em 1em; margin-bottom: 0.5em;
+  }
+  .cp-badge {
+    background: var(--mongo); color: var(--dark);
+    border-radius: 6px; padding: 0.2em 0.6em;
+    font-weight: 700; font-size: 0.7em; white-space: nowrap;
+  }
+  .cp-title { font-weight: 700; font-size: 0.72em; color: var(--dark); }
+  .cp-detail { font-size: 0.6em; color: var(--muted); margin-top: 0.2em; }
+
+  /* ── Tool cards ── */
+  .tools { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; margin-top: 0.5em; }
+  .tool-card {
+    border-radius: 8px; padding: 1em;
+    border: 2px solid var(--dark);
+    background: #F7FAFC;
+  }
+  .tool-card.highlight { border-color: var(--mongo); background: #E8F5E9; }
+  .tool-card h4 { font-family: 'Courier New', monospace; color: var(--dark); font-size: 0.8em; margin: 0 0 0.5em; }
+  .tool-card ul { margin: 0; padding-left: 1.2em; }
+  .tool-card li { font-size: 0.6em; color: #4A5568; margin-bottom: 0.3em; }
+  .tool-card .star { color: var(--mongo); font-weight: 700; font-size: 0.65em; }
+
+  /* ── Phase cards ── */
+  .phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8em; margin-top: 0.5em; }
+  .phase-card { border-radius: 8px; overflow: hidden; }
+  .phase-header { padding: 0.5em; text-align: center; font-weight: 700; font-size: 0.65em; color: var(--white); }
+  .phase-body { background: #F7FAFC; padding: 0.6em; font-size: 0.58em; color: #4A5568; min-height: 80px; }
+
+  /* ── Demo commands ── */
+  .demo-step {
+    display: flex; gap: 0.8em; align-items: flex-start;
+    margin-bottom: 0.7em;
+  }
+  .demo-num {
+    background: var(--mongo); color: var(--dark);
+    border-radius: 50%; width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.8em; flex-shrink: 0;
+  }
+  .demo-q { font-size: 0.65em; font-weight: 700; color: var(--dark); margin-bottom: 0.2em; }
+  .demo-hint { font-size: 0.55em; color: var(--muted); font-style: italic; margin-bottom: 0.3em; }
+
+  /* ── Result chips ── */
+  .result-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 0.5em; margin-top: 0.5em;
+  }
+  .result-row {
+    background: #F7FAFC; border-radius: 6px;
+    padding: 0.5em 0.8em; border-left: 3px solid var(--mongo);
+    font-size: 0.6em;
+  }
+  .result-row .q { color: var(--muted); margin-bottom: 0.2em; }
+  .result-row .a { color: var(--dark); font-weight: 700; }
+
+  /* ── Closing ── */
+  .closing { background: var(--dark) !important; }
+  .closing .accent-bar {
+    position: absolute; left: 0; top: 0;
+    width: 12px; height: 100vh;
+    background: var(--mongo);
+  }
+  .closing h1 { color: var(--white); margin-left: 30px; font-size: 3em; }
+  .closing p  { color: var(--mongo); margin-left: 30px; font-size: 0.9em; }
+  .closing .sub { color: var(--muted) !important; font-size: 0.75em !important; }
+
+  /* ── Progress bar ── */
+  .reveal .progress { color: var(--mongo); }
+
+  /* ── Slide number ── */
+  .reveal .slide-number { color: var(--muted); font-size: 0.7em; }
+
+  /* ── Fragment animations ── */
+  .reveal .fragment { opacity: 0.3; }
+  .reveal .fragment.visible { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 1 — PORTADA
+──────────────────────────────────────────────────────────────── -->
+<section class="cover" data-background-color="#001E2B">
+  <div class="accent-bar"></div>
+  <h1 style="margin-left:30px; margin-top: 1.2em; font-size: 2.6em;">
+    Bootcamp MongoDB
+  </h1>
+  <p class="subtitle" style="font-size:1.4em; margin-left:30px;">Equipo Corex 1</p>
+  <p class="team" style="margin-left:30px; margin-top:2em;">
+    Bancolombia
+  </p>
+  <aside class="notes">
+    Bienvenidos. Somos el equipo Corex 1 de Bancolombia.
+  </aside>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 2 — CASO DE USO
+──────────────────────────────────────────────────────────────── -->
+<section data-background-color="#000000">
+  <h2 style="color:var(--mongo); font-size:1.1em; margin-bottom:0.6em;">Caso de Uso</h2>
+  <h3 style="color:var(--white); font-size:1.5em; line-height:1.3; margin-bottom:0.8em;">
+    Agente SRE Autónomo para Diagnóstico<br/>y Autorremediación en infraestructuras de Kubernetes
+  </h3>
+  <p style="color:#CBD5E0; font-size:0.7em; line-height:1.7; max-width:80%;">
+    Alta latencia y errores HTTP 500 en producción. El agente identifica si el fallo viene del
+    <span style="color:var(--mongo); font-weight:700">código</span>,
+    la <span style="color:var(--mongo); font-weight:700">infraestructura</span> o el
+    <span style="color:var(--mongo); font-weight:700">agotamiento de recursos</span>
+    — sin revisión manual de paneles.
+  </p>
+  <div style="display:flex; gap:1.5em; margin-top:1.2em;">
+    <div style="border-left:3px solid var(--mongo); padding-left:0.8em;">
+      <div style="color:var(--mongo); font-size:1.6em; font-weight:700;">45–90 min</div>
+      <div style="color:var(--muted); font-size:0.6em;">diagnóstico P1 manual</div>
+      <div style="color:#555; font-size:0.45em; margin-top:0.3em;">Atlassian IM Survey 2023 · Gremlin SoE 2021<br/>Solo 23% equipos logran MTTR &lt; 1h<sup>[1]</sup></div>
+    </div>
+    <div style="border-left:3px solid var(--mongo); padding-left:0.8em;">
+      <div style="color:var(--mongo); font-size:1.6em; font-weight:700;">&lt; 5 min</div>
+      <div style="color:var(--muted); font-size:0.6em;">triage inicial con el agente</div>
+      <div style="color:#555; font-size:0.45em; margin-top:0.3em;">Google SRE Book: playbooks → 3× mejora MTTR<sup>[2]</sup><br/>Agente AI: consulta estructurada en segundos</div>
+    </div>
+    <div style="border-left:3px solid var(--mongo); padding-left:0.8em;">
+      <div style="color:var(--mongo); font-size:1.6em; font-weight:700;">~8 h/mes</div>
+      <div style="color:var(--muted); font-size:0.6em;">tiempo senior recuperado</div>
+      <div style="color:#555; font-size:0.45em; margin-top:0.3em;">PagerDuty SoDO 2021: 60% ingenieros<br/>+10h/sem trabajo no planificado<sup>[3]</sup></div>
+    </div>
+  </div>
+  <div style="margin-top:1em; font-size:0.38em; color:#444; border-top:1px solid #222; padding-top:0.5em;">
+    [1] Gremlin State of Chaos Engineering 2021 · gremlin.com &nbsp;|&nbsp;
+    [2] Google SRE Book, Ch. 1 · sre.google/sre-book &nbsp;|&nbsp;
+    [3] PagerDuty State of Digital Operations 2021 · pagerduty.com/resources/reports/digital-operations
+  </div>
+  <aside class="notes">
+    Los 45-90 min son la fase de diagnóstico (no MTTR total que es 2-4h). Solo el 23% de equipos logra MTTR menor a 1 hora según Gremlin 2021. El agente ataca específicamente esa fase.
+  </aside>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 3 — PATRÓN ELEGIDO
+──────────────────────────────────────────────────────────────── -->
+<section data-background-color="#000000">
+  <h2 style="color:var(--mongo); font-size:0.9em; margin-bottom:1em;">Patrón elegido</h2>
+  <div style="display:flex; gap:1.2em; align-items:center; justify-content:center;">
+    <div style="border:1px solid #333; border-radius:10px; padding:1em 1.4em; opacity:0.35; text-align:center;">
+      <p style="color:var(--muted); font-size:0.8em; font-weight:700; margin:0;">RAG</p>
+    </div>
+    <div style="border:3px solid var(--mongo); border-radius:10px; padding:1.4em 2em; text-align:center; position:relative;">
+      <div style="position:absolute; top:-14px; left:50%; transform:translateX(-50%); background:var(--mongo); color:#000; font-size:0.5em; font-weight:700; padding:3px 14px; border-radius:20px;">✓ ELEGIDO</div>
+      <p style="color:var(--white); font-size:1.1em; font-weight:700; margin:0 0 0.4em;">Structured Query</p>
+      <p style="color:var(--muted); font-size:0.6em; margin:0;">Consultas sobre registros de alertas<br/>en MongoDB · MTTR · correlaciones</p>
+    </div>
+    <div style="border:1px solid #333; border-radius:10px; padding:1em 1.4em; opacity:0.35; text-align:center;">
+      <p style="color:var(--muted); font-size:0.8em; font-weight:700; margin:0;">Hybrid</p>
+    </div>
+  </div>
+  <aside class="notes">
+    Nuestros datos son registros estructurados de alertas — Structured Query es el patrón natural.
+  </aside>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 4 — PROBLEMA Y SOLUCIÓN
+──────────────────────────────────────────────────────────────── -->
+<section data-background-color="#000000">
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:2em; align-items:center; height:100%;">
+    <div>
+      <p style="color:var(--mongo); font-size:0.7em; font-weight:700; margin-bottom:0.5em;">ANTES</p>
+      <p style="color:var(--white); font-size:1em; line-height:1.6;">
+        Alerta P1<br/>
+        <span style="color:var(--muted);">→ 4–6 paneles manuales<br/>→ 45–90 minutos<br/>→ servicio degradado</span>
+      </p>
+    </div>
+    <div>
+      <p style="color:var(--mongo); font-size:0.7em; font-weight:700; margin-bottom:0.5em;">AHORA</p>
+      <p style="color:var(--white); font-size:1em; line-height:1.6;">
+        Alerta P1<br/>
+        <span style="color:var(--muted);">→ una pregunta al agente<br/>→ <span style="color:var(--mongo); font-weight:700;">&lt; 5 minutos</span><br/>→ causa raíz + acción</span>
+      </p>
+    </div>
+  </div>
+  <aside class="notes">
+    El contraste es simple: antes 90 minutos manual, ahora menos de 5 minutos con el agente.
+  </aside>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 5 — LAS HERRAMIENTAS
+──────────────────────────────────────────────────────────────── -->
+<section data-background-color="#000000">
+  <h2 style="color:var(--mongo); font-size:0.9em; margin-bottom:1.2em;">Las Herramientas</h2>
+  <div style="display:flex; gap:3em; justify-content:center; align-items:center; margin-bottom:1.2em;">
+    <div style="text-align:center;">
+      <code style="color:var(--mongo); font-size:1.2em; font-weight:700;">structured_query</code>
+      <p style="color:var(--muted); font-size:0.6em; margin-top:0.5em;">Agrega alertas en MongoDB · MTTR · rankings</p>
+    </div>
+    <div style="text-align:center; border:2px solid var(--mongo); border-radius:8px; padding:0.8em 1.4em;">
+      <div style="color:var(--mongo); font-size:0.5em; font-weight:700; margin-bottom:0.4em;">★ CLAVE DEL DEMO</div>
+      <code style="color:var(--white); font-size:1.2em; font-weight:700;">correlate_alerts</code>
+      <p style="color:var(--muted); font-size:0.6em; margin-top:0.5em;">Detecta fallos en cascada en ventana temporal</p>
+    </div>
+  </div>
+  <pre><code class="language-typescript" style="font-size:0.65em">{ id: "inc_0051", service: "payment-service",  alert: "HIGH_LATENCY"             }
+{ id: "inc_0052", service: "postgres-main",    alert: "CONNECTION_POOL_EXHAUSTED" }
+// → 3 min · prod-us-east-1 → CASCADA CONFIRMADA</code></pre>
+  <aside class="notes">
+    Dos herramientas: structured_query para agregaciones y correlate_alerts para detectar cascadas.
+  </aside>
+</section>
+
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE 10 — DEMO EN VIVO
+──────────────────────────────────────────────────────────────── -->
+<section data-background-color="#000000">
+  <h2 style="color:var(--mongo); font-size:1em; margin-bottom:0.6em;">Demo</h2>
+
+  <div style="margin-bottom:0.6em;">
+    <p style="color:var(--muted); font-size:0.58em; margin-bottom:0.2em;">Refrescar datos antes de empezar:</p>
+    <pre><code class="language-bash" style="font-size:0.72em; background:#111; color:#fff;">npm run load</code></pre>
+  </div>
+
+  <div class="demo-step">
+    <div class="demo-num">1</div>
+    <div style="flex:1">
+      <div class="demo-q" style="color:var(--white);">¿Hay una degradación en producción ahora mismo?</div>
+      <pre><code class="language-bash" style="font-size:0.62em; background:#111; color:#fff;">npm run dev -- --pattern structured --thread demo --user sre_01 "Hay una degradación en producción ahora mismo, ¿qué está pasando?"</code></pre>
+    </div>
+  </div>
+
+  <div class="demo-step">
+    <div class="demo-num">2</div>
+    <div style="flex:1">
+      <div class="demo-q" style="color:var(--white);">¿Cuáles son los servicios más problemáticos del último mes?</div>
+      <pre><code class="language-bash" style="font-size:0.62em; background:#111; color:#fff;">npm run dev -- --pattern structured --thread demo --user sre_01 "¿Cuáles son los servicios más problemáticos del último mes y su MTTR?"</code></pre>
+    </div>
+  </div>
+
+  <div class="demo-step">
+    <div class="demo-num">3</div>
+    <div style="flex:1">
+      <div class="demo-q" style="color:var(--white);">¿Qué tan saturado está prod-us-east-1 vs prod-us-west-2?</div>
+      <pre><code class="language-bash" style="font-size:0.62em; background:#111; color:#fff;">npm run dev -- --pattern structured --thread demo --user sre_01 "prod-us-east-1 está bajo sospecha, ¿cómo está vs prod-us-west-2?"</code></pre>
+    </div>
+  </div>
+
+  <p style="font-size:0.55em; color:var(--mongo); font-style:italic; margin-top:0.4em;">
+    💡 Mismo --thread demo en las 3 preguntas — el agente recuerda el contexto.
+  </p>
+  <aside class="notes">
+    IMPORTANTE: ejecutar npm run load justo antes del demo.
+  </aside>
+</section>
+
+
+</div><!-- /slides -->
+</div><!-- /reveal -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/notes/notes.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/plugin/highlight/highlight.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  slideNumber: true,
+  progress: true,
+  controls: true,
+  transition: 'slide',
+  transitionSpeed: 'fast',
+  backgroundTransition: 'fade',
+  width: 1280,
+  height: 720,
+  margin: 0.04,
+  plugins: [ RevealNotes, RevealHighlight ]
+});
+</script>
+</body>
+</html>
