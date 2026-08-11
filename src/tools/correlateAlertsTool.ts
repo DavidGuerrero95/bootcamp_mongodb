@@ -4,6 +4,36 @@ import { getDb } from "../db/client";
 import { getConfig } from "../config";
 
 /**
+ * Pure chain-building logic. Exported for unit tests.
+ *
+ * Groups `sorted` items into contiguous chains where the gap between
+ * consecutive items is <= `windowMs`. Chains with only one item (isolated
+ * alerts) are NOT included — callers handle them as the `isolatedCount`.
+ */
+export function buildAlertChains<T>(
+  sorted: T[],
+  windowMs: number,
+  getTimestamp: (item: T) => Date,
+): T[][] {
+  if (sorted.length === 0) return [];
+  const chains: T[][] = [];
+  let chain: T[] = [sorted[0]!];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = chain[chain.length - 1]!;
+    const curr = sorted[i]!;
+    const gap = getTimestamp(curr).getTime() - getTimestamp(prev).getTime();
+    if (gap <= windowMs) {
+      chain.push(curr);
+    } else {
+      if (chain.length > 1) chains.push(chain);
+      chain = [curr];
+    }
+  }
+  if (chain.length > 1) chains.push(chain);
+  return chains;
+}
+
+/**
  * Finds P1 alerts that fired close together in the same cluster.
  *
  * Groups alerts into "chains" where consecutive alerts (by timestamp) fired
@@ -53,24 +83,9 @@ export const correlateAlerts = tool(
       });
     }
 
-    // Group consecutive alerts where the time gap is <= windowMinutes.
     const windowMs = windowMinutes * 60_000;
     type AlertRow = (typeof alerts)[number];
-    const chains: AlertRow[][] = [];
-    let chain: AlertRow[] = [alerts[0]!];
-
-    for (let i = 1; i < alerts.length; i++) {
-      const prev = chain[chain.length - 1]!;
-      const curr = alerts[i]!;
-      const gapMs = (curr["timestamp"] as Date).getTime() - (prev["timestamp"] as Date).getTime();
-      if (gapMs <= windowMs) {
-        chain.push(curr);
-      } else {
-        if (chain.length > 1) chains.push(chain);
-        chain = [curr];
-      }
-    }
-    if (chain.length > 1) chains.push(chain);
+    const chains = buildAlertChains<AlertRow>(alerts, windowMs, (a) => a["timestamp"] as Date);
 
     const isolatedCount = alerts.length - chains.reduce((s, c) => s + c.length, 0);
 

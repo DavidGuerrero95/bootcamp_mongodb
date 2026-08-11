@@ -27,20 +27,20 @@ export const remember = tool(
   {
     name: "remember",
     description:
-      "Persist a SHORT, durable fact or reference about the current user across sessions (their team, role, " +
-      "preferences, or ids of records they care about). Use it when the user states something worth recalling " +
-      "in future conversations. Do NOT store raw record contents or sensitive personal data; store references " +
+      "Persist a SHORT, durable fact or reference about the current user across sessions (their team, namespace, " +
+      "on-call cluster, role, or alert/service ids they care about). Use it when the user states something worth " +
+      "recalling in future conversations. Do NOT store raw alert contents or sensitive data; store references " +
       "(ids) and brief context only.",
     schema: z.object({
-      key: z.string().describe("A short stable key for this memory, e.g. 'team' or 'watched_cases'."),
+      key: z.string().describe("A short stable key for this memory, e.g. 'namespace' or 'watched_alerts'."),
       kind: z
         .enum(["profile", "preference", "reference"])
-        .describe("profile = who the user is; preference = how they like to work; reference = ids they care about."),
+        .describe("profile = who the user is (team, namespace, role); preference = how they like to work; reference = alert or service ids they track."),
       summary: z.string().describe("One short sentence of lightweight context. No raw record contents."),
       references: z
         .array(z.string())
         .optional()
-        .describe("Optional list of record ids this memory refers to."),
+        .describe("Optional list of alert ids (e.g. 'inc_0001') or service ids this memory refers to."),
     }),
   },
 );
