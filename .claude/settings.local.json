@@ -9,7 +9,19 @@
       "Bash(git fetch *)",
       "Bash(git pull *)",
       "Bash(sed 's|/root/bootcamp/src/|./src/|g')",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(netstat -tlnp)",
+      "Bash(lsof -i:3000)",
+      "Bash(curl -s http://127.0.0.1:3000)",
+      "Bash(fuser -k 3000/tcp)",
+      "Bash(pkill -f \"tsx src/server.ts\")",
+      "Bash(pkill -f \"server.ts\")",
+      "Read(//etc/code-server/**)",
+      "Read(//root/.config/code-server/**)",
+      "Bash(find / -name \"config.yaml\" -path \"*/code-server/*\")",
+      "Bash(pkill -f \"tsx src/server\")",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000)"
     ]
   }
 }

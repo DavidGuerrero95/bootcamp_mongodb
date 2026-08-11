@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/index.ts",
+    "web": "tsx src/server.ts",
     "load": "tsx data/load.ts",
     "verify": "tsx scripts/verify.ts",
     "test": "vitest run"
