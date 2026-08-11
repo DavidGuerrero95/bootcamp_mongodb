@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HumanMessage } from "@langchain/core/messages";
+import type { MessageContent } from "@langchain/core/messages";
 import { bootstrapCredentials } from "./credentials.js";
 import { getConfig } from "./config.js";
-import { buildPatternAgent, isPattern, type Pattern } from "./patterns.js";
+import { buildPatternAgent, type Pattern } from "./patterns.js";
 import { closeMongoClient } from "./db/client.js";
 import { messageContentToString } from "./util/message.js";
+import { parseChatRequest } from "./serverUtils.js";
 import type { Agent } from "./agent/graph.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,20 +39,13 @@ async function readBody(req: IncomingMessage): Promise<string> {
 }
 
 async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let question: string, pattern: Pattern, threadId: string, userId: string;
-
-  try {
-    const parsed = JSON.parse(await readBody(req)) as Record<string, unknown>;
-    question = String(parsed["question"] ?? "").trim();
-    pattern = isPattern(String(parsed["pattern"] ?? "")) ? (parsed["pattern"] as Pattern) : "hybrid";
-    threadId = String(parsed["thread_id"] ?? "demo");
-    userId = String(parsed["user_id"] ?? "user_demo");
-    if (!question) throw new Error("empty question");
-  } catch {
+  const parsed = parseChatRequest(await readBody(req));
+  if ("error" in parsed) {
     res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request body" }));
+    res.end(JSON.stringify({ error: parsed.error }));
     return;
   }
+  const { question, pattern, threadId, userId } = parsed;
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -91,8 +86,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<vo
               sse(res, { type: "tool_call", tool: tc.name, args: tc.args });
             }
           } else if (last?.["content"]) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const text = messageContentToString(last["content"] as any);
+            const text = messageContentToString(last["content"] as MessageContent);
             if (text) sse(res, { type: "answer", content: text });
           }
         } else if (node === "tools") {
