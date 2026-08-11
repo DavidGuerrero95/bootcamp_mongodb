@@ -5,7 +5,11 @@
       "Bash(gh api *)",
       "Bash(python3 -c \"import sys,json; t=json.load\\(sys.stdin\\); [print\\(f['path']\\) for f in t.get\\('tree',[]\\) if f['type']=='blob']\")",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(sed 's|/root/bootcamp/src/|./src/|g')",
+      "Bash(npx tsx *)"
     ]
   }
 }
