@@ -18,7 +18,7 @@ import { getConfig } from "../config";
  * `remember` tool's schema are built to encourage that.
  */
 
-export type MemoryKind = "profile" | "preference" | "reference";
+export type MemoryKind = "profile" | "preference" | "reference" | "remediation";
 
 export interface UserMemory {
   kind: MemoryKind;
