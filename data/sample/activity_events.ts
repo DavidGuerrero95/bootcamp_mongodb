@@ -3,12 +3,14 @@ import {
   SEVERITIES,
   ALERT_STATUSES,
   CLUSTER_IDS,
+  ROOT_CAUSE_CATEGORIES,
   P1_ALERT_TYPES,
   P1_ALERT_TYPE_SET,
   type AlertType,
   type Severity,
   type AlertStatus,
   type ClusterId,
+  type RootCauseCategory,
 } from "../../src/query/schema";
 
 /**
@@ -39,6 +41,8 @@ export interface AlertEvent {
   timestamp: Date;
   investigatingAt: Date | null;
   resolvedAt: Date | null;
+  /** null on ACTIVE alerts; assigned once the team begins INVESTIGATING or resolves. */
+  rootCauseCategory: RootCauseCategory | null;
 }
 
 const SERVICES = [
@@ -56,6 +60,21 @@ const FILLER_COUNT = 289;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const MIN_MS = 60_000;
+
+/**
+ * Canonical root cause for each alert type, used when a record transitions to
+ * INVESTIGATING or RESOLVED. Deterministic — no rng call needed.
+ */
+function rootCauseForAlertType(alertType: AlertType): RootCauseCategory {
+  switch (alertType) {
+    case "HIGH_LATENCY": return "resource_exhaustion";
+    case "HTTP_500": return "code_defect";
+    case "OOM_KILLED": return "resource_exhaustion";
+    case "CONNECTION_POOL_EXHAUSTED": return "resource_exhaustion";
+    case "POD_RESTART": return "configuration_drift";
+    case "CPU_THROTTLING": return "resource_exhaustion";
+  }
+}
 
 /** Configured alert thresholds by alertType (same units as metricValue). */
 const THRESHOLDS: Record<AlertType, number> = {
@@ -146,6 +165,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 90 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
+    rootCauseCategory: null,
   });
 
   preAssigned.push({
@@ -161,6 +181,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 87 * MIN_MS), // 3 min after inc_0051
     investigatingAt: null,
     resolvedAt: null,
+    rootCauseCategory: null,
   });
 
   // Two more payment-service P1 ACTIVE (+ inc_0051 = exactly 3 for Fact 1).
@@ -176,6 +197,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 75 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
+    rootCauseCategory: null,
   });
 
   regular.push({
@@ -190,6 +212,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 45 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
+    rootCauseCategory: null,
   });
 
   // ---- Anchors: Verifiable Fact 3 -----------------------------------------
@@ -212,6 +235,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: res1Ts,
     investigatingAt: new Date(res1Ts.getTime() + 5 * MIN_MS),
     resolvedAt: new Date(res1Ts.getTime() + 30 * MIN_MS),
+    rootCauseCategory: "resource_exhaustion", // HIGH_LATENCY caused by DB saturation
   });
 
   const res2Ts = new Date(SOM + 26 * HOUR_MS);
@@ -227,6 +251,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: res2Ts,
     investigatingAt: new Date(res2Ts.getTime() + 8 * MIN_MS),
     resolvedAt: new Date(res2Ts.getTime() + 40 * MIN_MS),
+    rootCauseCategory: "code_defect", // HTTP 500 traced to a bad deploy
   });
 
   const res3Ts = new Date(SOM + 50 * HOUR_MS);
@@ -242,6 +267,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: res3Ts,
     investigatingAt: new Date(res3Ts.getTime() + 10 * MIN_MS),
     resolvedAt: new Date(res3Ts.getTime() + 41 * MIN_MS),
+    rootCauseCategory: "resource_exhaustion", // connection pool undersized for traffic spike
   });
 
   // ---- Anchors: Verifiable Fact 4 -----------------------------------------
@@ -261,6 +287,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 4 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 3 * HOUR_MS),
     resolvedAt: null,
+    rootCauseCategory: rootCauseForAlertType("CPU_THROTTLING"),
   });
 
   regular.push({
@@ -275,6 +302,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 2 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 1 * HOUR_MS),
     resolvedAt: null,
+    rootCauseCategory: rootCauseForAlertType("POD_RESTART"),
   });
 
   regular.push({
@@ -289,6 +317,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 3 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS - 2 * HOUR_MS),
     resolvedAt: null,
+    rootCauseCategory: rootCauseForAlertType("OOM_KILLED"),
   });
 
   regular.push({
@@ -303,6 +332,7 @@ function buildEvents(now: Date): AlertEvent[] {
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 1 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS),
     resolvedAt: null,
+    rootCauseCategory: rootCauseForAlertType("CPU_THROTTLING"),
   });
 
   // ---- Filler records ------------------------------------------------------
@@ -353,6 +383,7 @@ function buildEvents(now: Date): AlertEvent[] {
       timestamp,
       investigatingAt,
       resolvedAt,
+      rootCauseCategory: status === "RESOLVED" ? rootCauseForAlertType(alertType) : null,
     });
   }
 
@@ -400,6 +431,8 @@ export interface Expectations {
   };
   /** Count of INVESTIGATING incidents (Fact 4). */
   investigatingCount: number;
+  /** How many P1 RESOLVED this month have rootCauseCategory "resource_exhaustion" (Fact 5). */
+  p1ResourceExhaustionThisMonth: number;
   /** ID of an anchor record suitable for the hybrid assess demo. */
   assessSubjectId: string;
 }
@@ -428,6 +461,7 @@ export function computeExpectations(events: AlertEvent[], now: Date = new Date()
   const [m0 = 0, m1 = 0, m2 = 0] = resolutionMins;
 
   const investigating = events.filter((e) => e.status === "INVESTIGATING");
+  const p1ResourceExhaustion = p1Resolved.filter((e) => e.rootCauseCategory === "resource_exhaustion");
 
   return {
     totalEvents: events.length,
@@ -446,6 +480,7 @@ export function computeExpectations(events: AlertEvent[], now: Date = new Date()
           : 0,
     },
     investigatingCount: investigating.length,
+    p1ResourceExhaustionThisMonth: p1ResourceExhaustion.length,
     assessSubjectId: "inc_0051",
   };
 }
@@ -478,6 +513,14 @@ export function generateAlertEvents(now: Date = new Date()): AlertEvent[] {
       throw new Error(
         `${e._id}: P1 severity with alertType "${e.alertType}" is not allowed (only HIGH_LATENCY, HTTP_500, CONNECTION_POOL_EXHAUSTED)`,
       );
+
+    // rootCauseCategory must be null on ACTIVE; non-null once investigating/resolved
+    if (e.status === "ACTIVE" && e.rootCauseCategory !== null)
+      throw new Error(`${e._id}: ACTIVE record must have null rootCauseCategory`);
+    if ((e.status === "INVESTIGATING" || e.status === "RESOLVED") && e.rootCauseCategory === null)
+      throw new Error(`${e._id}: ${e.status} record must have a non-null rootCauseCategory`);
+    if (e.rootCauseCategory !== null && !(ROOT_CAUSE_CATEGORIES as readonly string[]).includes(e.rootCauseCategory))
+      throw new Error(`${e._id}: unknown rootCauseCategory "${e.rootCauseCategory}"`);
 
     // Status / timestamp invariants
     if (e.status === "RESOLVED" && e.resolvedAt === null)

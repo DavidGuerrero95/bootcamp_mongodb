@@ -1,6 +1,17 @@
 # My structured collection
 
-Fill in every section below, then run **Option A** from `prompts/phase-1-foundation.md`. Replace the bracketed placeholders. Keep it short and concrete; this is the spec the generator is built from. A filled-in example (the shipped bank scenario) follows at the bottom for reference.
+---
+
+## Data Details
+
+- **Source:** datos sintéticos que simulan eventos de Prometheus/Alertmanager exportados a MongoDB Atlas
+- **Content type:** eventos de monitoreo estructurados (time-series de alertas de microservicios)
+- **Size:** ~300 registros
+- **Format:** documentos BSON, colección `alert_events` en MongoDB Atlas
+- **Structured data source route:** `EVENTS_COLLECTION=alert_events` en `.env`
+- **Access status:** datos sintéticos locales, sin conexión a infraestructura de producción
+- **Data classification:** sintético, sin PII, aprobado para demo de bootcamp
+- **Data owner:** equipo de plataforma SRE (uso interno de bootcamp)
 
 ---
 
@@ -26,12 +37,14 @@ Fill in every section below, then run **Option A** from `prompts/phase-1-foundat
 | `timestamp` | Date | BSON UTC — momento en que se disparó la alerta |
 | `investigatingAt` | Date | BSON UTC — momento en que el sistema pasó a estado `INVESTIGATING`; null si no aplica |
 | `resolvedAt` | Date | BSON UTC — momento en que el sistema pasó a estado `RESOLVED`; null si aún no resuelto |
+| `rootCauseCategory` | string\|null | causa raíz identificada (ver enums); null en alertas ACTIVE, asignado al pasar a INVESTIGATING o RESOLVED |
 
 ## Enums
 
 - `alertType`: `HIGH_LATENCY`, `HTTP_500`, `OOM_KILLED`, `CONNECTION_POOL_EXHAUSTED`, `POD_RESTART`, `CPU_THROTTLING`
 - `severity`: `P1`, `P2`, `P3`
 - `status`: `ACTIVE`, `INVESTIGATING`, `RESOLVED`
+- `rootCauseCategory`: `code_defect`, `resource_exhaustion`, `configuration_drift`, `unknown`
 
 ## Units and conventions
 
@@ -44,17 +57,19 @@ Fill in every section below, then run **Option A** from `prompts/phase-1-foundat
 
 - Una alerta con `status = RESOLVED` siempre tiene `resolvedAt` no nulo.
 - Una alerta con `status = INVESTIGATING` siempre tiene `investigatingAt` no nulo y `resolvedAt` nulo.
-- Una alerta con `status = ACTIVE` tiene `investigatingAt` y `resolvedAt` nulos.
+- Una alerta con `status = ACTIVE` tiene `investigatingAt`, `resolvedAt` y `rootCauseCategory` nulos.
 - Una alerta con `severity = P1` siempre tiene `alertType` en `HIGH_LATENCY`, `HTTP_500`, o `CONNECTION_POOL_EXHAUSTED`.
+- `rootCauseCategory` es null en alertas `ACTIVE`; debe ser no nulo en `INVESTIGATING` y `RESOLVED`.
 - El `clusterId` es siempre uno de los clusters definidos en el dataset.
 - `investigatingAt` < `resolvedAt` cuando ambos están presentes.
 
 ## Verifiable facts (the anchors)
 
-- "¿Qué servicio tiene más alertas P1 activas ahora mismo?" → exactamente `payment-service` con 3 alertas P1 en `status = ACTIVE`, todos con `timestamp` dentro de las últimas 2 horas. Ningún otro servicio supera 2 alertas P1 activas simultáneas.
-- "¿Hay alertas correlacionadas en los últimos 15 minutos que sugieran un problema en cadena?" → exactamente 2 registros sembrados: `inc_0051` (`payment-service`, `HIGH_LATENCY`, P1, ACTIVE) y `inc_0052` (`postgres-main`, `CONNECTION_POOL_EXHAUSTED`, P1, ACTIVE), con timestamps separados por menos de 5 minutos, ambos en `prod-us-east-1`. Ningún otro par cumple esa condición en esa ventana.
-- "¿Cuál fue el tiempo promedio de resolución de incidentes P1 este mes?" → exactamente 37 minutos, calculado sobre 3 incidentes P1 con `status = RESOLVED` y `timestamp` dentro del mes actual. Sus tiempos individuales de resolución (`resolvedAt - timestamp`) suman 111 minutos (ej. 30, 40 y 41 minutos), promediando 37.
-- "¿Cuántos incidentes están en estado INVESTIGATING en este momento?" → exactamente 4 registros con `status = INVESTIGATING`, distribuidos en al menos 2 servicios distintos.
+- **Fact 1** — "¿Qué servicio tiene más alertas P1 activas ahora mismo?" → exactamente `payment-service` con 3 alertas P1 en `status = ACTIVE`, todos con `timestamp` dentro de las últimas 2 horas. Ningún otro servicio supera 2 alertas P1 activas simultáneas.
+- **Fact 2** — "¿Hay alertas correlacionadas en los últimos 15 minutos que sugieran un problema en cadena?" → exactamente 2 registros sembrados: `inc_0051` (`payment-service`, `HIGH_LATENCY`, P1, ACTIVE) y `inc_0052` (`postgres-main`, `CONNECTION_POOL_EXHAUSTED`, P1, ACTIVE), con timestamps separados por menos de 5 minutos, ambos en `prod-us-east-1`. Ningún otro par cumple esa condición en esa ventana.
+- **Fact 3** — "¿Cuál fue el tiempo promedio de resolución de incidentes P1 este mes?" → exactamente 37 minutos, calculado sobre 3 incidentes P1 con `status = RESOLVED` y `timestamp` dentro del mes actual. Sus tiempos individuales de resolución (`resolvedAt - timestamp`) suman 111 minutos (30, 40 y 41 minutos), promediando 37.
+- **Fact 4** — "¿Cuántos incidentes están en estado INVESTIGATING en este momento?" → exactamente 4 registros con `status = INVESTIGATING`, distribuidos en al menos 2 servicios distintos.
+- **Fact 5** — "¿Cuántos incidentes P1 resueltos este mes tuvieron `rootCauseCategory = resource_exhaustion`?" → exactamente 2 (auth-service HIGH_LATENCY y payment-service CONNECTION_POOL_EXHAUSTED); el tercero tiene `code_defect`.
 
 ## Sample records (hand-author 3 to 5)
 

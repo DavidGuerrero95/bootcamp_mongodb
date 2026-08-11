@@ -2,6 +2,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { knowledgeBaseSearch } from "../retrieval/retrieverTool";
 import { structuredQuery } from "../query/queryTool";
 import { assess } from "../hybrid/hybridTool";
+import { correlateAlerts } from "./correlateAlertsTool";
 
 /**
  * The tool registry. This is where a team plugs in its 2-3 business tools.
@@ -20,7 +21,7 @@ import { assess } from "../hybrid/hybridTool";
 export type AgentTool = StructuredToolInterface;
 
 /** Every tool the scaffold ships with. */
-export const allTools: AgentTool[] = [knowledgeBaseSearch, structuredQuery, assess];
+export const allTools: AgentTool[] = [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts];
 
 /** Lookup by tool name, handy for tests and the verify script. */
 export const toolsByName: Record<string, AgentTool> = Object.fromEntries(

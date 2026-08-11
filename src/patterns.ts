@@ -2,6 +2,7 @@ import { buildAgent, type Agent } from "./agent/graph";
 import { knowledgeBaseSearch } from "./retrieval/retrieverTool";
 import { structuredQuery } from "./query/queryTool";
 import { assess } from "./hybrid/hybridTool";
+import { correlateAlerts } from "./tools/correlateAlertsTool";
 import { remember } from "./tools/memoryTools";
 import type { AgentTool } from "./tools/registry";
 import { RAG_PROMPT, STRUCTURED_PROMPT, HYBRID_PROMPT } from "./agent/prompts/index";
@@ -28,7 +29,7 @@ export function toolsForPattern(pattern: Pattern): AgentTool[] {
     case "rag":
       return [knowledgeBaseSearch, remember];
     case "structured":
-      return [structuredQuery, remember];
+      return [structuredQuery, correlateAlerts, remember];
     case "hybrid":
       return [knowledgeBaseSearch, structuredQuery, assess, remember];
   }

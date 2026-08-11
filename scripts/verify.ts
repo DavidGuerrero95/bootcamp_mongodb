@@ -5,6 +5,7 @@ import { closeMongoClient } from "../src/db/client";
 import { knowledgeBaseSearch } from "../src/retrieval/retrieverTool";
 import { structuredQuery } from "../src/query/queryTool";
 import { assess } from "../src/hybrid/hybridTool";
+import { correlateAlerts } from "../src/tools/correlateAlertsTool";
 import { buildPatternAgent } from "../src/patterns";
 import { messageContentToString } from "../src/util/message";
 import { generateAlertEvents, computeExpectations } from "../data/sample/activity_events";
@@ -101,6 +102,31 @@ async function main(): Promise<void> {
     "structured_query computes average P1 resolution time this month",
     avgResolution.includes(String(exp.p1ResolvedThisMonth.avgResolutionMinutes)),
     `expected ${exp.p1ResolvedThisMonth.avgResolutionMinutes} min`,
+  );
+
+  // Fact 2: correlated cascade chain (inc_0051 + inc_0052) in prod-us-east-1.
+  const correlated = await correlateAlerts.invoke({
+    clusterId: exp.correlatedPair.first.clusterId,
+    windowMinutes: 15,
+    lookbackHours: 24,
+  });
+  check(
+    "correlate_alerts finds the cascade chain in prod-us-east-1",
+    correlated.includes(exp.correlatedPair.first._id) && correlated.includes(exp.correlatedPair.second._id),
+    `expected ${exp.correlatedPair.first._id} and ${exp.correlatedPair.second._id} in the same chain`,
+  );
+
+  // Fact 5: P1 RESOLVED this month with rootCauseCategory = resource_exhaustion.
+  const byCause = await structuredQuery.invoke({
+    question:
+      "How many P1 RESOLVED incidents this month have rootCauseCategory 'resource_exhaustion'? " +
+      "Filter by severity P1, status RESOLVED, rootCauseCategory resource_exhaustion, " +
+      "and timestamp within the current calendar month. Return the count.",
+  });
+  check(
+    "structured_query counts P1 resource_exhaustion incidents this month",
+    byCause.includes(String(exp.p1ResourceExhaustionThisMonth)),
+    `expected ${exp.p1ResourceExhaustionThisMonth}`,
   );
 
   const judgment = await assess.invoke({ subjectId: exp.assessSubjectId });

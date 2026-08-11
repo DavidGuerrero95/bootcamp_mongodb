@@ -77,26 +77,41 @@ export const P1_ALERT_TYPES = [
 
 export const P1_ALERT_TYPE_SET: ReadonlySet<AlertType> = new Set<AlertType>(P1_ALERT_TYPES);
 
+/**
+ * Root cause categories assigned once a team begins INVESTIGATING or resolves
+ * an alert. null on ACTIVE alerts — no cause has been identified yet.
+ */
+export const ROOT_CAUSE_CATEGORIES = [
+  "code_defect",
+  "resource_exhaustion",
+  "configuration_drift",
+  "unknown",
+] as const;
+export type RootCauseCategory = (typeof ROOT_CAUSE_CATEGORIES)[number];
+
 const ALERT_EVENTS_DESCRIPTION = `Collection: alert_events
 One document per monitoring alert fired by a microservice in production. Fields:
-  _id               string   stable id like "inc_0001"
-  serviceId         string   machine identifier of the affected service,
-                             e.g. "payment-service", "postgres-main", "orders-api", "auth-service"
-  serviceName       string   readable service name, e.g. "Payment Service"
-  alertType         string   one of: ${ALERT_TYPES.join(", ")}
-  metricValue       number   observed metric value: ms for HIGH_LATENCY; percent (0-100)
-                             for CPU_THROTTLING and OOM_KILLED; integer count for HTTP_500
-                             and POD_RESTART; connection count for CONNECTION_POOL_EXHAUSTED.
-  threshold         number   configured threshold the metric exceeded; same units as metricValue.
-  severity          string   one of: ${SEVERITIES.join(", ")}
-                             P1 is only assigned to HIGH_LATENCY, HTTP_500, and
-                             CONNECTION_POOL_EXHAUSTED alerts.
-  status            string   one of: ${ALERT_STATUSES.join(", ")}
-                             State machine: ACTIVE -> INVESTIGATING -> RESOLVED.
-  clusterId         string   one of: ${CLUSTER_IDS.join(", ")}
-  timestamp         Date     BSON date when the alert fired (UTC)
-  investigatingAt   Date     BSON date when the alert entered INVESTIGATING; null if not yet.
-  resolvedAt        Date     BSON date when the alert was resolved; null if not yet resolved.
+  _id                string   stable id like "inc_0001"
+  serviceId          string   machine identifier of the affected service,
+                              e.g. "payment-service", "postgres-main", "orders-api", "auth-service"
+  serviceName        string   readable service name, e.g. "Payment Service"
+  alertType          string   one of: ${ALERT_TYPES.join(", ")}
+  metricValue        number   observed metric value: ms for HIGH_LATENCY; percent (0-100)
+                              for CPU_THROTTLING and OOM_KILLED; integer count for HTTP_500
+                              and POD_RESTART; connection count for CONNECTION_POOL_EXHAUSTED.
+  threshold          number   configured threshold the metric exceeded; same units as metricValue.
+  severity           string   one of: ${SEVERITIES.join(", ")}
+                              P1 is only assigned to HIGH_LATENCY, HTTP_500, and
+                              CONNECTION_POOL_EXHAUSTED alerts.
+  status             string   one of: ${ALERT_STATUSES.join(", ")}
+                              State machine: ACTIVE -> INVESTIGATING -> RESOLVED.
+  clusterId          string   one of: ${CLUSTER_IDS.join(", ")}
+  timestamp          Date     BSON date when the alert fired (UTC)
+  investigatingAt    Date     BSON date when the alert entered INVESTIGATING; null if not yet.
+  resolvedAt         Date     BSON date when the alert was resolved; null if not yet resolved.
+  rootCauseCategory  string   one of: ${ROOT_CAUSE_CATEGORIES.join(", ")}.
+                              null on ACTIVE alerts; assigned once the team begins
+                              INVESTIGATING or marks the alert RESOLVED.
 
 Guidance for pipelines:
   - "which service has the most P1 alerts" => $match severity:"P1", $group by serviceId,
@@ -110,6 +125,10 @@ Guidance for pipelines:
   - "P1 incidents this month" => $match severity:"P1" plus timestamp within the
     current calendar month using $$NOW:
     {"$match":{"$expr":{"$gte":["$timestamp",{"$dateTrunc":{"date":"$$NOW","unit":"month"}}]}}}
+  - "root cause breakdown" or "caused by resource_exhaustion" => $match
+    rootCauseCategory:"resource_exhaustion" (or whichever category). Always also
+    filter {rootCauseCategory:{$ne:null}} when grouping by this field, because
+    ACTIVE alerts have rootCauseCategory null and would create a spurious null bucket.
   - timestamp, investigatingAt, and resolvedAt are real BSON Dates. Always write
     date literals as Extended JSON: {"$date":"2026-08-01T00:00:00Z"}.
     A bare string never matches a BSON Date.
