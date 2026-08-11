@@ -162,7 +162,7 @@ function buildEvents(now: Date): AlertEvent[] {
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
-    timestamp: new Date(now.getTime() - 90 * MIN_MS),
+    timestamp: new Date(now.getTime() - 10 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
     rootCauseCategory: null,
@@ -178,7 +178,7 @@ function buildEvents(now: Date): AlertEvent[] {
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
-    timestamp: new Date(now.getTime() - 87 * MIN_MS), // 3 min after inc_0051
+    timestamp: new Date(now.getTime() - 7 * MIN_MS), // 3 min after inc_0051
     investigatingAt: null,
     resolvedAt: null,
     rootCauseCategory: null,
