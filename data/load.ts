@@ -135,7 +135,10 @@ async function loadEvents(): Promise<number> {
   await collection.createIndex({ alertType: 1 });
   await collection.createIndex({ timestamp: 1 });
   await collection.createIndex({ rootCauseCategory: 1 });
+  await collection.createIndex({ namespace: 1 });
+  await collection.createIndex({ meshError: 1 });
   await collection.createIndex({ clusterId: 1, severity: 1, timestamp: 1 }); // for correlate_alerts
+  await collection.createIndex({ namespace: 1, severity: 1, status: 1 });    // for namespace-scoped queries
 
   console.log(`  Events: ${events.length} documents into "${cfg.EVENTS_COLLECTION}" (+ indexes).`);
   return events.length;

@@ -12,6 +12,16 @@ A team is turning this reference scaffold into their own enterprise AI agent on 
 - Make small, verifiable changes. After each change run `npm run typecheck`. After changing data, run `npm run load`. Try the result with `npm run dev`. Gate progress with `npm run verify`.
 - Work at the scaffold's extension points; do not rewire the plumbing unless the team explicitly needs it.
 
+## PoC update rule (Corex 1 — apply after every adjustment)
+
+After every non-trivial change, always run these steps in order and report which passed:
+
+1. `npm run typecheck` — zero errors required before anything else.
+2. `npm run load` — only if `data/sample/` or `data/load.ts` changed (re-embeds KB docs and reloads events).
+3. `npm run verify` — run after typecheck passes; report which checkpoints pass and which fail.
+
+If any step fails, fix it before considering the change done. The PoC is the single source of truth: a change that breaks `verify` is not finished.
+
 ## Where to edit, and where not to
 
 - **Edit for your agent:** `src/patterns.ts` (which tools and prompt run), `src/agent/prompts/en.ts` and `es.ts` (persona), `data/sample/` (the team's data), `src/query/schema.ts` (how the query tool reads the fields), new tools under `src/tools/` registered in `src/tools/registry.ts`, `src/tools/memoryTools.ts`, and `.env`.

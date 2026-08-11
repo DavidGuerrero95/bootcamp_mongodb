@@ -52,6 +52,9 @@ export const ALERT_TYPES = [
   "CONNECTION_POOL_EXHAUSTED",
   "POD_RESTART",
   "CPU_THROTTLING",
+  "HTTP_4XX_SPIKE",
+  "CIRCUIT_BREAKER_OPEN",
+  "SERVICE_MESH_TIMEOUT",
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
@@ -64,15 +67,35 @@ export type AlertStatus = (typeof ALERT_STATUSES)[number];
 export const CLUSTER_IDS = ["prod-us-east-1", "prod-us-west-2"] as const;
 export type ClusterId = (typeof CLUSTER_IDS)[number];
 
+export const NAMESPACES = [
+  "payments-ns",
+  "auth-ns",
+  "orders-ns",
+  "data-ns",
+  "platform-ns",
+] as const;
+export type Namespace = (typeof NAMESPACES)[number];
+
+/** Service-mesh failure modes. Non-null only for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT alerts. */
+export const MESH_ERRORS = [
+  "CIRCUIT_BREAKER_OPEN",
+  "TIMEOUT",
+  "RETRY_EXCEEDED",
+  "CONNECTION_REFUSED",
+] as const;
+export type MeshError = (typeof MESH_ERRORS)[number];
+
 /**
- * Alert types that may carry P1 severity. P2 and P3 are valid for all six types;
- * P1 is restricted to these three. Used by the generator and by load-time
+ * Alert types that may carry P1 severity. P2 and P3 are valid for all types;
+ * P1 is restricted to these. Used by the generator and by load-time
  * assertions to keep severity and alertType consistent.
  */
 export const P1_ALERT_TYPES = [
   "HIGH_LATENCY",
   "HTTP_500",
   "CONNECTION_POOL_EXHAUSTED",
+  "CIRCUIT_BREAKER_OPEN",
+  "SERVICE_MESH_TIMEOUT",
 ] as const satisfies readonly AlertType[];
 
 export const P1_ALERT_TYPE_SET: ReadonlySet<AlertType> = new Set<AlertType>(P1_ALERT_TYPES);
@@ -85,6 +108,7 @@ export const ROOT_CAUSE_CATEGORIES = [
   "code_defect",
   "resource_exhaustion",
   "configuration_drift",
+  "dependency",
   "unknown",
 ] as const;
 export type RootCauseCategory = (typeof ROOT_CAUSE_CATEGORIES)[number];
@@ -95,23 +119,32 @@ One document per monitoring alert fired by a microservice in production. Fields:
   serviceId          string   machine identifier of the affected service,
                               e.g. "payment-service", "postgres-main", "orders-api", "auth-service"
   serviceName        string   readable service name, e.g. "Payment Service"
+  namespace          string   Kubernetes namespace: ${NAMESPACES.join(", ")}
+  podName            string   pod instance that fired the alert,
+                              e.g. "payment-service-7f4b8c-xk2mn"
   alertType          string   one of: ${ALERT_TYPES.join(", ")}
-  metricValue        number   observed metric value: ms for HIGH_LATENCY; percent (0-100)
-                              for CPU_THROTTLING and OOM_KILLED; integer count for HTTP_500
-                              and POD_RESTART; connection count for CONNECTION_POOL_EXHAUSTED.
+  metricValue        number   observed metric value: ms for HIGH_LATENCY and SERVICE_MESH_TIMEOUT;
+                              percent (0-100) for CPU_THROTTLING, OOM_KILLED, and CIRCUIT_BREAKER_OPEN;
+                              integer count for HTTP_500, POD_RESTART, and HTTP_4XX_SPIKE;
+                              connection count for CONNECTION_POOL_EXHAUSTED.
   threshold          number   configured threshold the metric exceeded; same units as metricValue.
   severity           string   one of: ${SEVERITIES.join(", ")}
-                              P1 is only assigned to HIGH_LATENCY, HTTP_500, and
-                              CONNECTION_POOL_EXHAUSTED alerts.
+                              P1 is only assigned to HIGH_LATENCY, HTTP_500,
+                              CONNECTION_POOL_EXHAUSTED, CIRCUIT_BREAKER_OPEN,
+                              and SERVICE_MESH_TIMEOUT alerts.
   status             string   one of: ${ALERT_STATUSES.join(", ")}
                               State machine: ACTIVE -> INVESTIGATING -> RESOLVED.
   clusterId          string   one of: ${CLUSTER_IDS.join(", ")}
+  meshError          string   service-mesh failure layer: one of ${MESH_ERRORS.join(", ")}.
+                              null when the alert is not mesh-related.
+                              Only non-null for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT alertTypes.
   timestamp          Date     BSON date when the alert fired (UTC)
   investigatingAt    Date     BSON date when the alert entered INVESTIGATING; null if not yet.
   resolvedAt         Date     BSON date when the alert was resolved; null if not yet resolved.
   rootCauseCategory  string   one of: ${ROOT_CAUSE_CATEGORIES.join(", ")}.
                               null on ACTIVE alerts; assigned once the team begins
                               INVESTIGATING or marks the alert RESOLVED.
+                              Use "dependency" for failures caused by a downstream service.
 
 Guidance for pipelines:
   - "which service has the most P1 alerts" => $match severity:"P1", $group by serviceId,
@@ -129,6 +162,11 @@ Guidance for pipelines:
     rootCauseCategory:"resource_exhaustion" (or whichever category). Always also
     filter {rootCauseCategory:{$ne:null}} when grouping by this field, because
     ACTIVE alerts have rootCauseCategory null and would create a spurious null bucket.
+  - "circuit breakers" or "mesh errors" or "service mesh issues" =>
+    $match meshError:{$ne:null} for all mesh alerts, or
+    $match meshError:"CIRCUIT_BREAKER_OPEN" for circuit-breaker specifically.
+  - "alerts in namespace X" => $match namespace:"payments-ns" (use exact namespace value).
+  - "pod-level issues" or "which pod is crashing" => group or project on podName field.
   - timestamp, investigatingAt, and resolvedAt are real BSON Dates. Always write
     date literals as Extended JSON: {"$date":"2026-08-01T00:00:00Z"}.
     A bare string never matches a BSON Date.

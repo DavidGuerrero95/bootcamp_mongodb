@@ -31,7 +31,7 @@ export function toolsForPattern(pattern: Pattern): AgentTool[] {
     case "structured":
       return [structuredQuery, correlateAlerts, remember];
     case "hybrid":
-      return [knowledgeBaseSearch, structuredQuery, assess, remember];
+      return [knowledgeBaseSearch, structuredQuery, assess, correlateAlerts, remember];
   }
 }
 

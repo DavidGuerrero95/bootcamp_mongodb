@@ -3,6 +3,8 @@ import {
   SEVERITIES,
   ALERT_STATUSES,
   CLUSTER_IDS,
+  NAMESPACES,
+  MESH_ERRORS,
   ROOT_CAUSE_CATEGORIES,
   P1_ALERT_TYPES,
   P1_ALERT_TYPE_SET,
@@ -10,6 +12,8 @@ import {
   type Severity,
   type AlertStatus,
   type ClusterId,
+  type Namespace,
+  type MeshError,
   type RootCauseCategory,
 } from "../../src/query/schema";
 
@@ -32,12 +36,16 @@ export interface AlertEvent {
   _id: string;
   serviceId: string;
   serviceName: string;
+  namespace: Namespace;
+  podName: string;
   alertType: AlertType;
   metricValue: number;
   threshold: number;
   severity: Severity;
   status: AlertStatus;
   clusterId: ClusterId;
+  /** Non-null only for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT alertTypes. */
+  meshError: MeshError | null;
   timestamp: Date;
   investigatingAt: Date | null;
   resolvedAt: Date | null;
@@ -46,12 +54,12 @@ export interface AlertEvent {
 }
 
 const SERVICES = [
-  { serviceId: "payment-service", serviceName: "Payment Service" },
-  { serviceId: "postgres-main", serviceName: "Main Database" },
-  { serviceId: "orders-api", serviceName: "Orders API" },
-  { serviceId: "auth-service", serviceName: "Auth Service" },
-  { serviceId: "inventory-service", serviceName: "Inventory Service" },
-  { serviceId: "notification-service", serviceName: "Notification Service" },
+  { serviceId: "payment-service",      serviceName: "Payment Service",      namespace: "payments-ns" as Namespace, podName: "payment-service-7f4b8c-xk2mn" },
+  { serviceId: "postgres-main",        serviceName: "Main Database",         namespace: "data-ns"     as Namespace, podName: "postgres-main-6d3a91-wj5pq"     },
+  { serviceId: "orders-api",           serviceName: "Orders API",            namespace: "orders-ns"   as Namespace, podName: "orders-api-5c2f87-rv4nt"         },
+  { serviceId: "auth-service",         serviceName: "Auth Service",          namespace: "auth-ns"     as Namespace, podName: "auth-service-8a1e45-bz7qw"       },
+  { serviceId: "inventory-service",    serviceName: "Inventory Service",     namespace: "orders-ns"   as Namespace, podName: "inventory-service-3b9d62-hs8lc"  },
+  { serviceId: "notification-service", serviceName: "Notification Service",  namespace: "platform-ns" as Namespace, podName: "notification-service-4e7c30-tp6rx" },
 ] as const;
 
 const SEED = 424242;
@@ -67,23 +75,41 @@ const MIN_MS = 60_000;
  */
 function rootCauseForAlertType(alertType: AlertType): RootCauseCategory {
   switch (alertType) {
-    case "HIGH_LATENCY": return "resource_exhaustion";
-    case "HTTP_500": return "code_defect";
-    case "OOM_KILLED": return "resource_exhaustion";
-    case "CONNECTION_POOL_EXHAUSTED": return "resource_exhaustion";
-    case "POD_RESTART": return "configuration_drift";
-    case "CPU_THROTTLING": return "resource_exhaustion";
+    case "HIGH_LATENCY":             return "resource_exhaustion";
+    case "HTTP_500":                 return "code_defect";
+    case "OOM_KILLED":               return "resource_exhaustion";
+    case "CONNECTION_POOL_EXHAUSTED":return "resource_exhaustion";
+    case "POD_RESTART":              return "configuration_drift";
+    case "CPU_THROTTLING":           return "resource_exhaustion";
+    case "HTTP_4XX_SPIKE":           return "configuration_drift";
+    case "CIRCUIT_BREAKER_OPEN":     return "dependency";
+    case "SERVICE_MESH_TIMEOUT":     return "dependency";
+  }
+}
+
+/**
+ * Mesh error for a given alert type. Only CIRCUIT_BREAKER_OPEN and
+ * SERVICE_MESH_TIMEOUT produce a non-null mesh error — all others are null.
+ */
+function meshErrorForAlertType(alertType: AlertType): MeshError | null {
+  switch (alertType) {
+    case "CIRCUIT_BREAKER_OPEN":  return "CIRCUIT_BREAKER_OPEN";
+    case "SERVICE_MESH_TIMEOUT":  return "TIMEOUT";
+    default:                      return null;
   }
 }
 
 /** Configured alert thresholds by alertType (same units as metricValue). */
 const THRESHOLDS: Record<AlertType, number> = {
-  HIGH_LATENCY: 500, // ms
-  HTTP_500: 50, // error count
-  OOM_KILLED: 75, // percent
-  CONNECTION_POOL_EXHAUSTED: 80, // connection count
-  POD_RESTART: 3, // restart count
-  CPU_THROTTLING: 75, // percent
+  HIGH_LATENCY:              500,  // ms
+  HTTP_500:                   50,  // error count
+  OOM_KILLED:                 75,  // percent
+  CONNECTION_POOL_EXHAUSTED:  80,  // connection count
+  POD_RESTART:                 3,  // restart count
+  CPU_THROTTLING:             75,  // percent
+  HTTP_4XX_SPIKE:            200,  // request count
+  CIRCUIT_BREAKER_OPEN:       60,  // percent error rate
+  SERVICE_MESH_TIMEOUT:     2000,  // ms
 };
 
 /** Small deterministic PRNG (mulberry32). */
@@ -118,15 +144,21 @@ function observedMetric(rng: () => number, alertType: AlertType): number {
     case "HIGH_LATENCY":
       return t + Math.floor(rng() * 4500) + 100; // 600–5100 ms
     case "HTTP_500":
-      return t + Math.floor(rng() * 450) + 10; // 60–510 errors
+      return t + Math.floor(rng() * 450) + 10;   // 60–510 errors
     case "OOM_KILLED":
-      return t + Math.floor(rng() * 24) + 1; // 76–99 %
+      return t + Math.floor(rng() * 24) + 1;     // 76–99 %
     case "CONNECTION_POOL_EXHAUSTED":
-      return t + Math.floor(rng() * 120) + 1; // 81–200 connections
+      return t + Math.floor(rng() * 120) + 1;    // 81–200 connections
     case "POD_RESTART":
-      return t + Math.floor(rng() * 17) + 1; // 4–20 restarts
+      return t + Math.floor(rng() * 17) + 1;     // 4–20 restarts
     case "CPU_THROTTLING":
-      return t + Math.floor(rng() * 24) + 1; // 76–99 %
+      return t + Math.floor(rng() * 24) + 1;     // 76–99 %
+    case "HTTP_4XX_SPIKE":
+      return t + Math.floor(rng() * 600) + 10;   // 210–810 requests
+    case "CIRCUIT_BREAKER_OPEN":
+      return t + Math.floor(rng() * 39) + 1;     // 61–99 % error rate
+    case "SERVICE_MESH_TIMEOUT":
+      return t + Math.floor(rng() * 6000) + 100; // 2100–8100 ms
   }
 }
 
@@ -156,12 +188,15 @@ function buildEvents(now: Date): AlertEvent[] {
     _id: "inc_0051",
     serviceId: "payment-service",
     serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
     alertType: "HIGH_LATENCY",
     metricValue: 1420,
     threshold: THRESHOLDS.HIGH_LATENCY,
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: new Date(now.getTime() - 10 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -172,12 +207,15 @@ function buildEvents(now: Date): AlertEvent[] {
     _id: "inc_0052",
     serviceId: "postgres-main",
     serviceName: "Main Database",
+    namespace: "data-ns",
+    podName: "postgres-main-6d3a91-wj5pq",
     alertType: "CONNECTION_POOL_EXHAUSTED",
     metricValue: 97,
     threshold: THRESHOLDS.CONNECTION_POOL_EXHAUSTED,
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: new Date(now.getTime() - 7 * MIN_MS), // 3 min after inc_0051
     investigatingAt: null,
     resolvedAt: null,
@@ -188,12 +226,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "payment-service",
     serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
     alertType: "HTTP_500",
     metricValue: 312,
     threshold: THRESHOLDS.HTTP_500,
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: new Date(now.getTime() - 75 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -203,12 +244,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "payment-service",
     serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
     alertType: "HIGH_LATENCY",
     metricValue: 2150,
     threshold: THRESHOLDS.HIGH_LATENCY,
     severity: "P1",
     status: "ACTIVE",
     clusterId: "prod-us-west-2",
+    meshError: null,
     timestamp: new Date(now.getTime() - 45 * MIN_MS),
     investigatingAt: null,
     resolvedAt: null,
@@ -226,48 +270,57 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "auth-service",
     serviceName: "Auth Service",
+    namespace: "auth-ns",
+    podName: "auth-service-8a1e45-bz7qw",
     alertType: "HIGH_LATENCY",
     metricValue: 1800,
     threshold: THRESHOLDS.HIGH_LATENCY,
     severity: "P1",
     status: "RESOLVED",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: res1Ts,
     investigatingAt: new Date(res1Ts.getTime() + 5 * MIN_MS),
     resolvedAt: new Date(res1Ts.getTime() + 30 * MIN_MS),
-    rootCauseCategory: "resource_exhaustion", // HIGH_LATENCY caused by DB saturation
+    rootCauseCategory: "resource_exhaustion",
   });
 
   const res2Ts = new Date(SOM + 26 * HOUR_MS);
   regular.push({
     serviceId: "orders-api",
     serviceName: "Orders API",
+    namespace: "orders-ns",
+    podName: "orders-api-5c2f87-rv4nt",
     alertType: "HTTP_500",
     metricValue: 425,
     threshold: THRESHOLDS.HTTP_500,
     severity: "P1",
     status: "RESOLVED",
     clusterId: "prod-us-west-2",
+    meshError: null,
     timestamp: res2Ts,
     investigatingAt: new Date(res2Ts.getTime() + 8 * MIN_MS),
     resolvedAt: new Date(res2Ts.getTime() + 40 * MIN_MS),
-    rootCauseCategory: "code_defect", // HTTP 500 traced to a bad deploy
+    rootCauseCategory: "code_defect",
   });
 
   const res3Ts = new Date(SOM + 50 * HOUR_MS);
   regular.push({
     serviceId: "payment-service",
     serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
     alertType: "CONNECTION_POOL_EXHAUSTED",
     metricValue: 153,
     threshold: THRESHOLDS.CONNECTION_POOL_EXHAUSTED,
     severity: "P1",
     status: "RESOLVED",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: res3Ts,
     investigatingAt: new Date(res3Ts.getTime() + 10 * MIN_MS),
     resolvedAt: new Date(res3Ts.getTime() + 41 * MIN_MS),
-    rootCauseCategory: "resource_exhaustion", // connection pool undersized for traffic spike
+    rootCauseCategory: "resource_exhaustion",
   });
 
   // ---- Anchors: Verifiable Fact 4 -----------------------------------------
@@ -278,12 +331,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "payment-service",
     serviceName: "Payment Service",
+    namespace: "payments-ns",
+    podName: "payment-service-7f4b8c-xk2mn",
     alertType: "CPU_THROTTLING",
     metricValue: 92,
     threshold: THRESHOLDS.CPU_THROTTLING,
     severity: "P2",
     status: "INVESTIGATING",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 4 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 3 * HOUR_MS),
     resolvedAt: null,
@@ -293,12 +349,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "orders-api",
     serviceName: "Orders API",
+    namespace: "orders-ns",
+    podName: "orders-api-5c2f87-rv4nt",
     alertType: "POD_RESTART",
     metricValue: 7,
     threshold: THRESHOLDS.POD_RESTART,
     severity: "P2",
     status: "INVESTIGATING",
     clusterId: "prod-us-west-2",
+    meshError: null,
     timestamp: new Date(now.getTime() - 3 * DAY_MS - 2 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 3 * DAY_MS - 1 * HOUR_MS),
     resolvedAt: null,
@@ -308,12 +367,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "auth-service",
     serviceName: "Auth Service",
+    namespace: "auth-ns",
+    podName: "auth-service-8a1e45-bz7qw",
     alertType: "OOM_KILLED",
     metricValue: 89,
     threshold: THRESHOLDS.OOM_KILLED,
     severity: "P3",
     status: "INVESTIGATING",
     clusterId: "prod-us-east-1",
+    meshError: null,
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 3 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS - 2 * HOUR_MS),
     resolvedAt: null,
@@ -323,12 +385,15 @@ function buildEvents(now: Date): AlertEvent[] {
   regular.push({
     serviceId: "postgres-main",
     serviceName: "Main Database",
+    namespace: "data-ns",
+    podName: "postgres-main-6d3a91-wj5pq",
     alertType: "CPU_THROTTLING",
     metricValue: 88,
     threshold: THRESHOLDS.CPU_THROTTLING,
     severity: "P3",
     status: "INVESTIGATING",
     clusterId: "prod-us-west-2",
+    meshError: null,
     timestamp: new Date(now.getTime() - 2 * DAY_MS - 1 * HOUR_MS),
     investigatingAt: new Date(now.getTime() - 2 * DAY_MS),
     resolvedAt: null,
@@ -364,7 +429,6 @@ function buildEvents(now: Date): AlertEvent[] {
 
     if (status === "RESOLVED") {
       const resolutionMs = (Math.floor(rng() * 240) + 10) * MIN_MS; // 10–250 min
-      // investigatingAt is in the first half of the resolution window (>= 1 min after alert).
       const investigatingOffsetMs =
         Math.floor(rng() * (resolutionMs / 2 - MIN_MS)) + MIN_MS;
       investigatingAt = new Date(timestamp.getTime() + investigatingOffsetMs);
@@ -374,12 +438,15 @@ function buildEvents(now: Date): AlertEvent[] {
     regular.push({
       serviceId: svc.serviceId,
       serviceName: svc.serviceName,
+      namespace: svc.namespace,
+      podName: svc.podName,
       alertType,
       metricValue: metric,
       threshold: THRESHOLDS[alertType],
       severity,
       status,
       clusterId,
+      meshError: meshErrorForAlertType(alertType),
       timestamp,
       investigatingAt,
       resolvedAt,
@@ -507,11 +574,22 @@ export function generateAlertEvents(now: Date = new Date()): AlertEvent[] {
       throw new Error(`${e._id}: unknown status "${e.status}"`);
     if (!CLUSTER_IDS.includes(e.clusterId))
       throw new Error(`${e._id}: unknown clusterId "${e.clusterId}"`);
+    if (!NAMESPACES.includes(e.namespace))
+      throw new Error(`${e._id}: unknown namespace "${e.namespace}"`);
+
+    // meshError must be non-null exactly for CIRCUIT_BREAKER_OPEN and SERVICE_MESH_TIMEOUT
+    const expectsMeshError = e.alertType === "CIRCUIT_BREAKER_OPEN" || e.alertType === "SERVICE_MESH_TIMEOUT";
+    if (expectsMeshError && e.meshError === null)
+      throw new Error(`${e._id}: alertType "${e.alertType}" requires a non-null meshError`);
+    if (!expectsMeshError && e.meshError !== null)
+      throw new Error(`${e._id}: alertType "${e.alertType}" must have null meshError (got "${e.meshError}")`);
+    if (e.meshError !== null && !(MESH_ERRORS as readonly string[]).includes(e.meshError))
+      throw new Error(`${e._id}: unknown meshError "${e.meshError}"`);
 
     // P1 only for allowed alertTypes
     if (e.severity === "P1" && !P1_ALERT_TYPE_SET.has(e.alertType))
       throw new Error(
-        `${e._id}: P1 severity with alertType "${e.alertType}" is not allowed (only HIGH_LATENCY, HTTP_500, CONNECTION_POOL_EXHAUSTED)`,
+        `${e._id}: P1 severity with alertType "${e.alertType}" is not allowed`,
       );
 
     // rootCauseCategory must be null on ACTIVE; non-null once investigating/resolved

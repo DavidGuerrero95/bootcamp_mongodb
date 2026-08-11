@@ -34,14 +34,14 @@ async function findRelatedRecords(record: Document): Promise<Document[]> {
   const db = await getDb();
 
   const at = record.timestamp instanceof Date ? record.timestamp : null;
-  const sameTransaction: Filter<Document>[] = [{ userId: record.userId }];
-  if (typeof record.amount === "number" && record.amount > 0) {
-    sameTransaction.push({ amount: record.amount });
-  }
+  // Related alerts: same service or same cluster, close in time — likely part of the same incident.
+  const sameScope: Filter<Document>[] = [];
+  if (record.serviceId) sameScope.push({ serviceId: record.serviceId });
+  if (record.clusterId) sameScope.push({ clusterId: record.clusterId });
 
   const filter: Filter<Document> = {
     _id: { $ne: record._id },
-    $or: sameTransaction,
+    ...(sameScope.length > 0 ? { $or: sameScope } : {}),
     ...(at
       ? {
           timestamp: {
@@ -85,7 +85,7 @@ export const assess = tool(
 
     // Leg 2: retrieval. Seed the query with the record's salient fields so the
     // most relevant policy passages surface.
-    const retrievalQuery = `${focus} action=${String(record.action)} amount=${String(record.amount)} channel=${String(record.channel)} status=${String(record.status)}`;
+    const retrievalQuery = `${focus} alertType=${String(record.alertType)} severity=${String(record.severity)} serviceId=${String(record.serviceId)} clusterId=${String(record.clusterId)} status=${String(record.status)}`;
     const passages = await retrievePassages(retrievalQuery);
 
     // Fusion: reason over both, cite the passages.
@@ -117,15 +117,16 @@ export const assess = tool(
   {
     name: "assess",
     description:
-      "Assess a specific structured record against policy by fusing both legs: look up the record and retrieve " +
-      "the relevant policy passages, then produce a grounded, cited judgment. Use for questions like 'is event " +
-      "evt_0007 consistent with the dual-control policy?'. Takes the record's _id.",
+      "Assess a specific alert against SRE runbooks and operational policies by fusing both legs: look up the " +
+      "alert record and its related alerts (same service or cluster), retrieve relevant runbook passages, then " +
+      "produce a grounded, cited diagnosis. Use for questions like 'is alert evt_0007 consistent with expected " +
+      "behavior per the SLO policy?' or 'what does the runbook say about this OOM_KILLED alert?'.",
     schema: z.object({
-      subjectId: z.string().describe("The _id of the record to assess, e.g. 'evt_0007'."),
+      subjectId: z.string().describe("The _id of the alert record to assess, e.g. 'evt_0007'."),
       question: z
         .string()
         .optional()
-        .describe("Optional specific question. Defaults to policy-consistency of the event."),
+        .describe("Optional specific question. Defaults to checking runbook and SLO policy consistency."),
     }),
   },
 );

@@ -28,12 +28,15 @@
 | `_id` | string | stable id, e.g. `inc_0001` |
 | `serviceId` | string | identificador del microservicio afectado, e.g. `payment-service` |
 | `serviceName` | string | nombre legible del servicio, e.g. `Payment Service` |
+| `namespace` | string | namespace de Kubernetes donde corre el servicio (ver enums) |
+| `podName` | string | nombre del pod que disparó la alerta, e.g. `payment-service-7f4b8c-xk2mn` |
 | `alertType` | string | tipo de alerta disparada (ver enums) |
-| `metricValue` | number | valor observado de la métrica (ms para latencia, % para CPU/memoria, count para errores) |
-| `threshold` | number | umbral configurado que fue superado |
+| `metricValue` | number | valor observado de la métrica (ms para latencia, % para CPU/memoria/circuit-breaker, count para errores) |
+| `threshold` | number | umbral configurado que fue superado; mismas unidades que `metricValue` |
 | `severity` | string | nivel de severidad del incidente (ver enums) |
 | `status` | string | estado actual de la alerta (ver enums) |
 | `clusterId` | string | cluster de Kubernetes donde ocurrió, e.g. `prod-us-east-1` |
+| `meshError` | string\|null | falla detectada en la capa de service mesh (ver enums); null si no involucra mesh |
 | `timestamp` | Date | BSON UTC — momento en que se disparó la alerta |
 | `investigatingAt` | Date | BSON UTC — momento en que el sistema pasó a estado `INVESTIGATING`; null si no aplica |
 | `resolvedAt` | Date | BSON UTC — momento en que el sistema pasó a estado `RESOLVED`; null si aún no resuelto |
@@ -41,10 +44,12 @@
 
 ## Enums
 
-- `alertType`: `HIGH_LATENCY`, `HTTP_500`, `OOM_KILLED`, `CONNECTION_POOL_EXHAUSTED`, `POD_RESTART`, `CPU_THROTTLING`
-- `severity`: `P1`, `P2`, `P3`
+- `alertType`: `HIGH_LATENCY`, `HTTP_500`, `OOM_KILLED`, `CONNECTION_POOL_EXHAUSTED`, `POD_RESTART`, `CPU_THROTTLING`, `HTTP_4XX_SPIKE`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`
+- `severity`: `P1`, `P2`, `P3` — P1 solo para `HIGH_LATENCY`, `HTTP_500`, `CONNECTION_POOL_EXHAUSTED`, `CIRCUIT_BREAKER_OPEN`, `SERVICE_MESH_TIMEOUT`
 - `status`: `ACTIVE`, `INVESTIGATING`, `RESOLVED`
-- `rootCauseCategory`: `code_defect`, `resource_exhaustion`, `configuration_drift`, `unknown`
+- `namespace`: `payments-ns`, `auth-ns`, `orders-ns`, `data-ns`, `platform-ns`
+- `meshError`: `CIRCUIT_BREAKER_OPEN`, `TIMEOUT`, `RETRY_EXCEEDED`, `CONNECTION_REFUSED` — solo no-null en alertas `CIRCUIT_BREAKER_OPEN` y `SERVICE_MESH_TIMEOUT`
+- `rootCauseCategory`: `code_defect`, `resource_exhaustion`, `configuration_drift`, `dependency`, `unknown`
 
 ## Units and conventions
 

@@ -8,25 +8,26 @@
  */
 
 export const JUDGMENT_SYSTEM =
-  "Evalúas si un único evento operativo es consistente con la política. " +
-  "Recibes el registro del evento, los registros relacionados a su alrededor (mismo actor o mismo monto, " +
-  "cercanos en el tiempo) y los pasajes de política relevantes (recuperados). " +
-  "Cuando una política trata sobre un par de eventos, como una iniciación y una aprobación, usa los " +
-  "registros relacionados para verificarla: compara los actores, los montos y el orden. " +
+  "Eres un asistente SRE que evalúa si una alerta de Kubernetes es consistente con los runbooks operacionales y las políticas de SLO. " +
+  "Recibes el registro de la alerta, las alertas relacionadas del mismo servicio o clúster (cercanas en el tiempo) " +
+  "y los pasajes relevantes de los runbooks y políticas (recuperados). " +
+  "Usa las alertas relacionadas para determinar si hay un patrón de fallo en cascada: compara los tipos de alerta, " +
+  "el servicio, el clúster y los timestamps. " +
   "Responde en español. Fundamenta cada afirmación en los pasajes y cítalos por su etiqueta [n]. Si los " +
-  "pasajes no cubren algún punto, dilo en lugar de inventar política. Di que falta un registro solo si no " +
-  "aparece entre los registros relacionados mostrados; si no, di qué habría que consultar. " +
+  "pasajes no cubren algún punto, dilo en lugar de inventar procedimientos. " +
+  "Indica la causa raíz probable (`rootCauseCategory`: code_defect, resource_exhaustion, configuration_drift, dependency, o unknown) " +
+  "y la acción de remediación recomendada según el runbook. " +
   "Termina con un veredicto de una línea " +
   "usando EXACTAMENTE uno de estos tres tokens en inglés y en mayúsculas, sin traducirlos: " +
   "CONSISTENT, INCONSISTENT, o NEEDS REVIEW.";
 
 export const DEFAULT_QUESTION =
-  "¿Este evento es consistente con las políticas de gobierno de accesos y de doble control del banco?";
+  "¿Esta alerta es consistente con el comportamiento esperado según los runbooks de Kubernetes y las políticas de SLO?";
 
 export const LABELS = {
-  record: (collection: string) => `REGISTRO DEL EVENTO (de ${collection}):`,
-  related: "REGISTROS RELACIONADOS (mismo actor o monto, dentro de un día):",
-  noneRelated: "(ninguno encontrado)",
-  passages: "PASAJES DE POLÍTICA:",
+  record: (collection: string) => `REGISTRO DE ALERTA (de ${collection}):`,
+  related: "ALERTAS RELACIONADAS (mismo servicio o clúster, cercanas en el tiempo):",
+  noneRelated: "(ninguna encontrada)",
+  passages: "PASAJES DE RUNBOOK / POLÍTICA:",
   question: "PREGUNTA:",
 } as const;

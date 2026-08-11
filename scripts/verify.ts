@@ -53,7 +53,7 @@ async function main(): Promise<void> {
 
   // ---- Checkpoint 1: skeleton runs, one answer per leg -----------------------
   console.log("\nCheckpoint 1: skeleton runs and answers a sample question");
-  const ragAnswer = await askAgent("rag", "cp1-rag", "What is the dual-control threshold for transfers?");
+  const ragAnswer = await askAgent("rag", "cp1-rag", "What are the steps to remediate an OOM_KILLED incident in Kubernetes?");
   check("RAG agent returns a non-empty grounded answer", ragAnswer.trim().length > 0);
 
   const structAnswer = await askAgent(
@@ -66,10 +66,10 @@ async function main(): Promise<void> {
   // ---- Checkpoint 2: correct, evidence-backed results ------------------------
   console.log("\nCheckpoint 2: correct, evidence-backed results");
 
-  const kb = await knowledgeBaseSearch.invoke({ query: "What is the dual-control threshold for transfers?" });
+  const kb = await knowledgeBaseSearch.invoke({ query: "How do I remediate a Kubernetes OOM_KILLED or CONNECTION_POOL_EXHAUSTED incident?" });
   check("Retrieval returns cited passages (source .md)", kb.includes(".md"));
-  check("Retrieval finds the dual-control standard", kb.includes("dual-control-standard.md"));
-  check("Retrieval passage is relevant (mentions the threshold)", kb.includes("1,000,000") || kb.includes("10,000"));
+  check("Retrieval finds the Kubernetes incident runbook", kb.includes("incident-runbook.md"));
+  check("Retrieval passage is relevant (mentions remediation steps)", kb.includes("OOM") || kb.includes("rollback") || kb.includes("pool") || kb.includes("RESOURCE_EXHAUSTION"));
 
   // Fact 1: payment-service P1 ACTIVE count.
   const p1Active = await structuredQuery.invoke({
