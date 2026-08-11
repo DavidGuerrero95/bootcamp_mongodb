@@ -1,0 +1,97 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run typecheck)",
+      "Bash(npm run verify)",
+      "Bash(npm run load)",
+      "Bash(npm run dev)",
+      "Bash(npm run test)",
+      "Bash(tsx *)",
+      "Bash(tsc *)",
+      "Bash(git status)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(ls *)",
+      "Bash(find . *)",
+      "Bash(grep *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/prompt_memory_reminder.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/pre_bash_safety_guard.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/pre_write_secret_scan.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/post_edit_code_quality.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/session_end_orphan_check.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/post_task_docs_sync.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/bootcamp/scripts/agentic/session_end_orphan_check.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
