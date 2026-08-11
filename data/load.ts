@@ -6,7 +6,7 @@ import { bootstrapCredentials } from "../src/credentials";
 import { getConfig } from "../src/config";
 import { getDb, closeMongoClient } from "../src/db/client";
 import { getVectorStore, getKbCollection } from "../src/retrieval/vectorStore";
-import { generateActivityEvents } from "./sample/activity_events";
+import { generateAlertEvents } from "./sample/activity_events";
 
 /**
  * Seed the demo: chunk + embed + index the KB, and insert the synthetic events.
@@ -126,11 +126,13 @@ async function loadEvents(): Promise<number> {
   const collection = db.collection(cfg.EVENTS_COLLECTION);
 
   await collection.deleteMany({});
-  const events = generateActivityEvents(); // asserts internal consistency
+  const events = generateAlertEvents(); // asserts internal consistency
   await collection.insertMany(events as unknown as Array<Record<string, unknown>>);
 
-  await collection.createIndex({ userId: 1 });
-  await collection.createIndex({ action: 1 });
+  await collection.createIndex({ serviceId: 1 });
+  await collection.createIndex({ status: 1 });
+  await collection.createIndex({ severity: 1 });
+  await collection.createIndex({ alertType: 1 });
   await collection.createIndex({ timestamp: 1 });
 
   console.log(`  Events: ${events.length} documents into "${cfg.EVENTS_COLLECTION}" (+ indexes).`);

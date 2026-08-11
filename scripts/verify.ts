@@ -7,7 +7,7 @@ import { structuredQuery } from "../src/query/queryTool";
 import { assess } from "../src/hybrid/hybridTool";
 import { buildPatternAgent } from "../src/patterns";
 import { messageContentToString } from "../src/util/message";
-import { generateActivityEvents, computeExpectations } from "../data/sample/activity_events";
+import { generateAlertEvents, computeExpectations } from "../data/sample/activity_events";
 import { getMemoryStore, saveUserMemory, listUserMemories } from "../src/memory/store";
 
 /**
@@ -48,9 +48,7 @@ async function main(): Promise<void> {
   await bootstrapCredentials();
   getConfig();
 
-  const exp = computeExpectations(generateActivityEvents());
-  const largestAmount = String(exp.largestTransferThisMonth.amount);
-  const focusTotal = String(exp.focusUser.totalSuccessfulTransferMinorUnits);
+  const exp = computeExpectations(generateAlertEvents());
 
   // ---- Checkpoint 1: skeleton runs, one answer per leg -----------------------
   console.log("\nCheckpoint 1: skeleton runs and answers a sample question");
@@ -60,7 +58,7 @@ async function main(): Promise<void> {
   const structAnswer = await askAgent(
     "structured",
     "cp1-struct",
-    `What is the total amount in minor units of successful transfers by ${exp.focusUser.userName}?`,
+    "How many P1 ACTIVE alerts are there right now?",
   );
   check("Structured agent returns a non-empty answer", structAnswer.trim().length > 0);
 
@@ -72,18 +70,40 @@ async function main(): Promise<void> {
   check("Retrieval finds the dual-control standard", kb.includes("dual-control-standard.md"));
   check("Retrieval passage is relevant (mentions the threshold)", kb.includes("1,000,000") || kb.includes("10,000"));
 
-  const largest = await structuredQuery.invoke({
-    question: "Which transfer is the largest this month? Return its _id and amount.",
+  // Fact 1: payment-service P1 ACTIVE count.
+  const p1Active = await structuredQuery.invoke({
+    question: "How many P1 ACTIVE alerts does the payment-service have?",
   });
-  check("structured_query returns the correct largest transfer this month", largest.includes(largestAmount), `expected amount ${largestAmount}`);
-  check("structured_query result includes a plain-language explanation", largest.includes("explanation"));
+  check(
+    "structured_query counts payment-service P1 ACTIVE alerts",
+    p1Active.includes(String(exp.paymentServiceP1ActiveCount)),
+    `expected ${exp.paymentServiceP1ActiveCount}`,
+  );
+  check("structured_query result includes a plain-language explanation", p1Active.includes("explanation"));
 
-  const total = await structuredQuery.invoke({
-    question: `What is the total amount in minor units of successful transfers by ${exp.focusUser.userName}? Return the sum.`,
+  // Fact 4: INVESTIGATING count.
+  const investigating = await structuredQuery.invoke({
+    question: "How many incidents are currently in INVESTIGATING status?",
   });
-  check("structured_query computes the correct per-user total", total.includes(focusTotal), `expected total ${focusTotal}`);
+  check(
+    "structured_query counts INVESTIGATING incidents",
+    investigating.includes(String(exp.investigatingCount)),
+    `expected ${exp.investigatingCount}`,
+  );
 
-  const judgment = await assess.invoke({ subjectId: exp.dualControlViolation.approvedId });
+  // Fact 3: average P1 resolution time this month.
+  const avgResolution = await structuredQuery.invoke({
+    question:
+      "What is the average resolution time in minutes for P1 RESOLVED incidents this month? " +
+      "Compute resolvedAt minus timestamp, divide by 60000 for minutes, and return the average.",
+  });
+  check(
+    "structured_query computes average P1 resolution time this month",
+    avgResolution.includes(String(exp.p1ResolvedThisMonth.avgResolutionMinutes)),
+    `expected ${exp.p1ResolvedThisMonth.avgResolutionMinutes} min`,
+  );
+
+  const judgment = await assess.invoke({ subjectId: exp.assessSubjectId });
   check("hybrid assess produces citations (retrieval leg)", judgment.includes("citations") && judgment.includes(".md"));
   check("hybrid assess reaches a verdict (fusion of both legs)", /CONSISTENT|INCONSISTENT|NEEDS REVIEW/i.test(judgment));
 
@@ -122,9 +142,12 @@ async function main(): Promise<void> {
   const scenario = await askAgent(
     "hybrid",
     "cp3-scenario",
-    `Is event ${exp.dualControlViolation.approvedId} consistent with the dual-control standard? Explain and cite.`,
+    `Alert ${exp.assessSubjectId} is firing in production. Is this consistent with normal operating thresholds? Assess and cite any relevant standards.`,
   );
-  check("End-to-end hybrid scenario returns a reasoned answer", scenario.trim().length > 0 && /consistent|review|control/i.test(scenario));
+  check(
+    "End-to-end hybrid scenario returns a reasoned answer",
+    scenario.trim().length > 0 && /consistent|review|alert|incident|p1|latency/i.test(scenario),
+  );
 
   console.log(`\n${failures === 0 ? "All checks passed." : `${failures} check(s) failed.`}`);
   if (failures > 0) process.exitCode = 1;

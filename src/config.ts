@@ -29,7 +29,7 @@ const ConfigSchema = z.object({
   MONGODB_URI: z.string().min(1, "MONGODB_URI is required"),
   MONGODB_DB: z.string().min(1).default("buildrel"),
   KB_COLLECTION: z.string().min(1).default("kb_documents"),
-  EVENTS_COLLECTION: z.string().min(1).default("activity_events"),
+  EVENTS_COLLECTION: z.string().min(1).default("alert_events"),
   VECTOR_INDEX_NAME: z.string().min(1).default("vector_index"),
 
   // Presentation language. Selects which set of agent prompts is loaded

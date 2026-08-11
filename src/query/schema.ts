@@ -11,7 +11,7 @@
  * vague description here produces confidently wrong answers, which is the
  * failure mode that costs the most time to notice.
  *
- * Replace ACTIVITY_EVENTS_DESCRIPTION with your own, and cover five things:
+ * Replace ALERT_EVENTS_DESCRIPTION with your own, and cover five things:
  *
  * 1. One line saying what a single document IS. "One document per support
  *    ticket" tells the model whether to count documents or group them.
@@ -45,54 +45,79 @@
  * to get a Spanish `explanation` back.
  */
 
-export const ACTION_TYPES = [
-  "LOGIN",
-  "BALANCE_QUERY",
-  "TRANSFER_INITIATED",
-  "TRANSFER_APPROVED",
-  "USER_CREATED",
-  "USER_MODIFIED",
+export const ALERT_TYPES = [
+  "HIGH_LATENCY",
+  "HTTP_500",
+  "OOM_KILLED",
+  "CONNECTION_POOL_EXHAUSTED",
+  "POD_RESTART",
+  "CPU_THROTTLING",
 ] as const;
-export type ActionType = (typeof ACTION_TYPES)[number];
+export type AlertType = (typeof ALERT_TYPES)[number];
 
-export const CHANNELS = ["WEB", "MOBILE", "API", "BRANCH"] as const;
-export type Channel = (typeof CHANNELS)[number];
+export const SEVERITIES = ["P1", "P2", "P3"] as const;
+export type Severity = (typeof SEVERITIES)[number];
 
-export const STATUSES = ["SUCCESS", "FAILED", "PENDING"] as const;
-export type Status = (typeof STATUSES)[number];
+export const ALERT_STATUSES = ["ACTIVE", "INVESTIGATING", "RESOLVED"] as const;
+export type AlertStatus = (typeof ALERT_STATUSES)[number];
 
-/** Monetary actions carry a non-zero `amount` (in minor units); others are 0. */
-export const MONETARY_ACTIONS: ReadonlySet<ActionType> = new Set<ActionType>([
-  "TRANSFER_INITIATED",
-  "TRANSFER_APPROVED",
-]);
+export const CLUSTER_IDS = ["prod-us-east-1", "prod-us-west-2"] as const;
+export type ClusterId = (typeof CLUSTER_IDS)[number];
 
-const ACTIVITY_EVENTS_DESCRIPTION = `Collection: activity_events
-One document per operational event at the bank. Fields:
-  _id        string   stable id like "evt_0001"
-  userId     string   actor id like "user_03"
-  userName   string   actor display name, e.g. "Priya Nair"
-  action     string   one of: ${ACTION_TYPES.join(", ")}
-  amount     number   money moved in MINOR UNITS (cents). Non-zero only for
-                      ${[...MONETARY_ACTIONS].join(" and ")}; 0 otherwise.
-                      Example: amount 1500000 means 15,000.00 in currency units.
-  channel    string   one of: ${CHANNELS.join(", ")}
-  status     string   one of: ${STATUSES.join(", ")}
-  timestamp  Date     BSON date when the event occurred (UTC)
+/**
+ * Alert types that may carry P1 severity. P2 and P3 are valid for all six types;
+ * P1 is restricted to these three. Used by the generator and by load-time
+ * assertions to keep severity and alertType consistent.
+ */
+export const P1_ALERT_TYPES = [
+  "HIGH_LATENCY",
+  "HTTP_500",
+  "CONNECTION_POOL_EXHAUSTED",
+] as const satisfies readonly AlertType[];
+
+export const P1_ALERT_TYPE_SET: ReadonlySet<AlertType> = new Set<AlertType>(P1_ALERT_TYPES);
+
+const ALERT_EVENTS_DESCRIPTION = `Collection: alert_events
+One document per monitoring alert fired by a microservice in production. Fields:
+  _id               string   stable id like "inc_0001"
+  serviceId         string   machine identifier of the affected service,
+                             e.g. "payment-service", "postgres-main", "orders-api", "auth-service"
+  serviceName       string   readable service name, e.g. "Payment Service"
+  alertType         string   one of: ${ALERT_TYPES.join(", ")}
+  metricValue       number   observed metric value: ms for HIGH_LATENCY; percent (0-100)
+                             for CPU_THROTTLING and OOM_KILLED; integer count for HTTP_500
+                             and POD_RESTART; connection count for CONNECTION_POOL_EXHAUSTED.
+  threshold         number   configured threshold the metric exceeded; same units as metricValue.
+  severity          string   one of: ${SEVERITIES.join(", ")}
+                             P1 is only assigned to HIGH_LATENCY, HTTP_500, and
+                             CONNECTION_POOL_EXHAUSTED alerts.
+  status            string   one of: ${ALERT_STATUSES.join(", ")}
+                             State machine: ACTIVE -> INVESTIGATING -> RESOLVED.
+  clusterId         string   one of: ${CLUSTER_IDS.join(", ")}
+  timestamp         Date     BSON date when the alert fired (UTC)
+  investigatingAt   Date     BSON date when the alert entered INVESTIGATING; null if not yet.
+  resolvedAt        Date     BSON date when the alert was resolved; null if not yet resolved.
 
 Guidance for pipelines:
-  - "how much did user X move" => sum amount for that user, usually filtered to
-    transfer actions and/or status SUCCESS.
-  - "largest transfer this month" => filter action in the transfer actions and
-    timestamp within the current calendar month, sort amount descending.
-  - Amounts are integers in minor units; divide by 100 for display only, not in
-    the pipeline unless asked.
-  - timestamp is a real BSON Date. A plain string never matches a Date, so write
-    dates as Extended JSON: {"timestamp": {"$gte": {"$date": "2026-08-01T00:00:00Z"}}}
-    For windows relative to now, prefer $$NOW so the query stays correct later:
-    {"$match": {"$expr": {"$gte": ["$timestamp", {"$dateTrunc": {"date": "$$NOW", "unit": "month"}}]}}}
-  - Never assume the data is empty because a date filter returned nothing. Check
-    the filter's types first.`;
+  - "which service has the most P1 alerts" => $match severity:"P1", $group by serviceId,
+    $sort count desc. For ACTIVE only, also filter status:"ACTIVE".
+  - "alerts right now" or "current alerts" => $match status:"ACTIVE".
+    ACTIVE means no investigation has started; the service is still degraded.
+  - "in progress" or "being investigated" => $match status:"INVESTIGATING".
+  - "average resolution time" => $match resolvedAt non-null, $project
+    {resolutionMs:{$subtract:["$resolvedAt","$timestamp"]}}, $group with $avg.
+    Divide ms by 60000 to get minutes.
+  - "P1 incidents this month" => $match severity:"P1" plus timestamp within the
+    current calendar month using $$NOW:
+    {"$match":{"$expr":{"$gte":["$timestamp",{"$dateTrunc":{"date":"$$NOW","unit":"month"}}]}}}
+  - timestamp, investigatingAt, and resolvedAt are real BSON Dates. Always write
+    date literals as Extended JSON: {"$date":"2026-08-01T00:00:00Z"}.
+    A bare string never matches a BSON Date.
+  - investigatingAt and resolvedAt are null when the alert has not entered that phase.
+    Always filter {resolvedAt:{$ne:null}} before computing resolvedAt - timestamp,
+    or the subtraction returns null and skews aggregations.
+  - Do not assume "resolved" means resolvedAt equals timestamp; the gap is
+    typically minutes to hours. Use $subtract to compute durations.`;
 
 /**
  * Return a plain-language description of the target collection for the query
@@ -100,7 +125,7 @@ Guidance for pipelines:
  * their own data without editing this file first.
  */
 export function describeCollection(name: string): string {
-  if (name === "activity_events") return ACTIVITY_EVENTS_DESCRIPTION;
+  if (name === "alert_events") return ALERT_EVENTS_DESCRIPTION;
   // Falling through to this generic note means the model is guessing at your
   // fields. It usually still answers, which is exactly why this is easy to miss.
   // Register your collection above, following the checklist at the top.
